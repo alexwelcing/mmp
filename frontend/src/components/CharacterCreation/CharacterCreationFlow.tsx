@@ -44,7 +44,9 @@ const styles = {
 
 export function CharacterCreationFlow() {
   const [step, setStep] = useState<OnboardingStep>("free-roll");
-  const [userId] = useState(() => `user_${Math.random().toString(36).slice(2)}`);
+  // crypto.randomUUID() is cryptographically secure and available in all
+  // modern browsers.  We use it here for the anonymous session user ID.
+  const [userId] = useState(() => `user_${crypto.randomUUID()}`);
 
   const { character, isLoading, stage, error, mintFree, mintPaid } =
     useCharacterMint();
