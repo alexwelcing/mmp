@@ -278,7 +278,12 @@ class Web3Agent:
                 json={
                     "jsonrpc": "2.0",
                     "method": "eth_sendUserOperation",
-                    "params": [user_op, "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"],
+                    "params": [
+                        user_op,
+                        # ERC-4337 v0.6 canonical EntryPoint address (same on all EVM chains).
+                        # See: https://eips.ethereum.org/EIPS/eip-4337#entrypoint-definition
+                        "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
+                    ],
                     "id": 1,
                 },
             )

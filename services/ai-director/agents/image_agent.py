@@ -24,7 +24,11 @@ from config import Settings
 logger = logging.getLogger(__name__)
 
 # Paths to the ComfyUI workflow JSON templates.
-_WORKFLOW_DIR = Path(__file__).parent.parent / "workflows"
+# The workflow files live in services/comfyui-worker/workflows/ and are
+# mounted into the ComfyUI worker container at /workflows/.  When running
+# the AI Director locally (outside Docker), we fall back to the sibling
+# directory relative to the repository root.
+_WORKFLOW_DIR = Path(__file__).resolve().parents[3] / "services" / "comfyui-worker" / "workflows"
 _LIGHTNING_2D_WORKFLOW = _WORKFLOW_DIR / "lightning_2d_draft.json"
 _3DGS_WORKFLOW = _WORKFLOW_DIR / "3dgs_generation.json"
 
