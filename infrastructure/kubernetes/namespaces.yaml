@@ -1,0 +1,26 @@
+# Kubernetes namespaces for the MMP platform.
+# Each component runs in its own namespace for isolation and RBAC scoping.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-director
+  labels:
+    app.kubernetes.io/part-of: mmp
+    environment: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: comfyui
+  labels:
+    app.kubernetes.io/part-of: mmp
+    environment: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keda
+  labels:
+    app.kubernetes.io/part-of: mmp
+    environment: production
