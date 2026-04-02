@@ -1,0 +1,44 @@
+# ComfyUI ConfigMap — runtime configuration injected into worker pods.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: comfyui-config
+  namespace: comfyui
+data:
+  # ComfyUI extra_model_paths.yaml — tells ComfyUI where to find models
+  # on the shared Filestore NFS mount.
+  extra_model_paths.yaml: |
+    mmp_filestore:
+      base_path: /mnt/filestore/models
+      checkpoints: checkpoints/
+      clip: clip/
+      clip_vision: clip_vision/
+      configs: configs/
+      controlnet: controlnet/
+      embeddings: embeddings/
+      loras: loras/
+      upscale_models: upscale_models/
+      vae: vae/
+
+  # Startup script for model pre-downloading (run once as an init Job).
+  download_models.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    MODELS_DIR=/mnt/filestore/models
+
+    # SDXL-Lightning 6-step model.
+    if [ ! -f "${MODELS_DIR}/checkpoints/sdxl_lightning_6step.safetensors" ]; then
+      echo "Downloading SDXL-Lightning..."
+      wget -q -O "${MODELS_DIR}/checkpoints/sdxl_lightning_6step.safetensors" \
+        "https://huggingface.co/ByteDance/SDXL-Lightning/resolve/main/sdxl_lightning_6step_unet.safetensors"
+    fi
+
+    # Clarity Upscaler model.
+    if [ ! -f "${MODELS_DIR}/upscale_models/clarity_upscaler.pth" ]; then
+      echo "Downloading Clarity Upscaler..."
+      wget -q -O "${MODELS_DIR}/upscale_models/clarity_upscaler.pth" \
+        "https://huggingface.co/philz1337x/clarity-upscaler/resolve/main/4x-ClearRealityV1.pth"
+    fi
+
+    echo "All models ready."
