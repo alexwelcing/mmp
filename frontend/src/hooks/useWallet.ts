@@ -123,9 +123,9 @@ export function useWallet(): UseWalletReturn {
       const accounts = accountsRaw.filter(
         (value): value is string => typeof value === "string"
       );
-        if (accounts.length > 0) {
-          void syncChainId(accounts[0]);
-        }
+      if (accounts.length === 0) {
+        throw new Error("No accounts returned by wallet");
+      }
       await syncChainId(accounts[0]);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Connection rejected";
