@@ -37,6 +37,7 @@ class AudioAgent:
     """Generates character soundscapes using an external audio inference API."""
 
     def __init__(self, settings: Settings) -> None:
+        self._settings = settings
         self._endpoint = str(settings.audio_endpoint).rstrip("/")
         self._model = settings.audio_model
         self._output_base = settings.output_base_path
@@ -51,6 +52,10 @@ class AudioAgent:
         Returns:
             URL / file path of the generated audio file.
         """
+        if self._settings.execution_mode == "mock":
+            mock_url = f"mock://audio/{character_role.lower()}.wav"
+            logger.info("Mock soundscape generated: %s", mock_url)
+            return mock_url
         prompt = _ROLE_AUDIO_PROMPTS.get(character_role.lower(), _DEFAULT_PROMPT)
         logger.info(
             "Generating soundscape for role=%s using model=%s",

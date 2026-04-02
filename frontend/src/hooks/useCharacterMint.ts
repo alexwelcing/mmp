@@ -212,10 +212,10 @@ function buildCharacter(status: GenerationStatus, jobId: string): Character {
       aesthetic: "Fantasy",
       rarity: "Common",
     },
-    imageUrl: status.upscaledUrl || status.selectedDraftUrl,
-    threedgsUrl: status.threedgsUrl,
-    audioUrl: status.audioUrl,
-    tokenId: status.nftTokenId ?? undefined,
+    imageUrl: status.upscaled_url || status.selected_draft_url,
+    threedgsUrl: status.threedgs_url,
+    audioUrl: status.audio_url,
+    tokenId: status.nft_token_id ?? undefined,
   };
 }
 

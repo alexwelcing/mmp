@@ -94,15 +94,19 @@ export type GenerationStage =
 
 /** Response body from GET /status/{jobId}. */
 export interface GenerationStatus {
-  jobId: string;
+  job_id: string;
+  mode: "mock" | "real";
   stage: GenerationStage;
-  draftUrls: string[];
-  selectedDraftUrl: string;
-  upscaledUrl: string;
-  threedgsUrl: string;
-  audioUrl: string;
-  nftTokenId: number | null;
+  draft_urls: string[];
+  selected_draft_url: string;
+  upscaled_url: string;
+  threedgs_url: string;
+  audio_url: string;
+  nft_token_id: number | null;
   error: string | null;
+  stage_durations_ms: Record<string, number>;
+  created_at_ms: number;
+  updated_at_ms: number;
 }
 
 // ── UI flow types ─────────────────────────────────────────────────────

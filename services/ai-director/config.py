@@ -117,6 +117,10 @@ class Settings(BaseSettings):
         ...,
         description="Private key for the AI Director operational wallet (required)",
     )
+    execution_mode: Literal["mock", "real"] = Field(
+        "mock",
+        description="Use 'mock' for local deterministic demo mode, 'real' for external integrations",
+    )
 
     # ------------------------------------------------------------------ #
     # Service                                                              #
@@ -132,6 +136,10 @@ class Settings(BaseSettings):
     cors_allow_origins: str = Field(
         "*",
         description="Comma-separated allowed CORS origins; use '*' for local dev only",
+    )
+    job_state_store_path: str = Field(
+        "/tmp/ai-director-jobs.json",
+        description="Path to persisted job-state JSON file",
     )
 
 

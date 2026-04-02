@@ -111,6 +111,7 @@ class GenerateResponse(BaseModel):
 
 class StatusResponse(BaseModel):
     job_id: str
+    mode: str
     stage: str
     draft_urls: list[str]
     selected_draft_url: str
@@ -119,6 +120,9 @@ class StatusResponse(BaseModel):
     audio_url: str
     nft_token_id: int | None
     error: str | None
+    stage_durations_ms: dict[str, int]
+    created_at_ms: int
+    updated_at_ms: int
 
 
 class ComfyUIWebhookPayload(BaseModel):
@@ -178,6 +182,7 @@ async def get_status(job_id: str) -> StatusResponse:
 
     return StatusResponse(
         job_id=job.job_id,
+        mode=job.mode,
         stage=job.stage.value,
         draft_urls=job.draft_urls,
         selected_draft_url=job.selected_draft_url,
@@ -186,6 +191,9 @@ async def get_status(job_id: str) -> StatusResponse:
         audio_url=job.audio_url,
         nft_token_id=job.nft_token_id,
         error=job.error,
+        stage_durations_ms=job.stage_durations_ms,
+        created_at_ms=job.created_at_ms,
+        updated_at_ms=job.updated_at_ms,
     )
 
 

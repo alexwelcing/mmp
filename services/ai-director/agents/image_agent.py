@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -46,6 +45,7 @@ class ImageAgent:
     """
 
     def __init__(self, settings: Settings) -> None:
+        self._settings = settings
         self._endpoint = str(settings.comfyui_endpoint).rstrip("/")
         self._timeout = settings.comfyui_timeout_seconds
         self._output_base = settings.output_base_path
@@ -65,6 +65,15 @@ class ImageAgent:
         Returns a list of file URLs / paths to the generated images.
         Each draft is generated concurrently for speed.
         """
+        if self._settings.execution_mode == "mock":
+            role = str(preferences.get("role", "warrior"))
+            aesthetic = str(preferences.get("aesthetic", "fantasy"))
+            mocked = [
+                f"mock://draft/{role}-{aesthetic}-{i}.png"
+                for i in range(count)
+            ]
+            logger.info("Generated %d mock 2D drafts", len(mocked))
+            return mocked
         tasks = [
             self._run_comfyui_workflow(
                 workflow_path=_LIGHTNING_2D_WORKFLOW,
@@ -83,6 +92,10 @@ class ImageAgent:
         The clarity upscaler (4× tile-based) preserves fine details while
         dramatically increasing resolution for print / 3D use.
         """
+        if self._settings.execution_mode == "mock":
+            mock_url = draft_url.replace("mock://draft/", "mock://upscaled/")
+            logger.info("Mock upscaled draft: %s → %s", draft_url, mock_url)
+            return mock_url
         params = {"input_image": draft_url, "upscale_factor": 4}
         upscaled = await self._run_comfyui_workflow(
             workflow_path=_LIGHTNING_2D_WORKFLOW,  # reuses same template w/ upscale node
@@ -98,6 +111,12 @@ class ImageAgent:
         Uses the SHARP (Score-based HARmonic Prior) model loaded inside
         ComfyUI via the comfyui-3dgs custom node pack.
         """
+        if self._settings.execution_mode == "mock":
+            mock_url = upscaled_url.replace("mock://upscaled/", "mock://3dgs/").replace(
+                ".png", ".splat"
+            )
+            logger.info("Mock 3DGS generation complete: %s", mock_url)
+            return mock_url
         params = {"input_image": upscaled_url}
         threedgs_path = await self._run_comfyui_workflow(
             workflow_path=_3DGS_WORKFLOW,
@@ -175,7 +194,7 @@ class ImageAgent:
         self, client: httpx.AsyncClient, prompt_id: str
     ) -> str:
         """Poll ComfyUI /history endpoint until a prompt completes."""
-        for attempt in range(self._timeout // 2):
+        for _attempt in range(self._timeout // 2):
             await asyncio.sleep(2)
             resp = await client.get(f"{self._endpoint}/history/{prompt_id}")
             resp.raise_for_status()
@@ -185,7 +204,7 @@ class ImageAgent:
                 continue  # not finished yet
 
             outputs = history[prompt_id].get("outputs", {})
-            for node_id, node_output in outputs.items():
+            for _node_id, node_output in outputs.items():
                 images = node_output.get("images", [])
                 if images:
                     img = images[0]

@@ -6,12 +6,6 @@ Responsibilities:
   2. Manage per-job state machines (draft → upscale → 3DGS → audio → mint).
   3. Delegate work to specialised sub-agents.
   4. Handle retries, dead-letter routing, and partial failures gracefully.
-
-Design notes:
-  - One asyncio task per active Pub/Sub message keeps the concurrency model
-    simple while staying within the max_concurrent_jobs budget.
-  - Job state is stored in an in-process dict for this tutorial; in
-    production you would persist to Cloud Spanner or Firestore.
 """
 
 from __future__ import annotations
@@ -19,14 +13,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
 from google.cloud import pubsub_v1
 
 from config import Settings
+from state_store import JsonStateStore
+
 from .audio_agent import AudioAgent
 from .evaluator_agent import EvaluatorAgent
 from .image_agent import ImageAgent
@@ -64,41 +61,34 @@ class GenerationJob:
     audio_url: str = ""
     nft_token_id: int | None = None
     error: str | None = None
+    stage_started_at_ms: int = 0
+    stage_durations_ms: dict[str, int] = field(default_factory=dict)
+    created_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
+    updated_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
+    mode: str = "mock"
 
 
 class OrchestratorAgent:
-    """
-    Coordinates the full asset generation pipeline.
-
-    Usage::
-
-        orchestrator = OrchestratorAgent(settings)
-        await orchestrator.start()   # blocks; pulls from Pub/Sub indefinitely
-    """
+    """Coordinates the full asset generation pipeline."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._jobs: dict[str, GenerationJob] = {}
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_jobs)
+        self._store = JsonStateStore(settings.job_state_store_path)
 
-        # Sub-agents are instantiated once and reused across jobs.
         self._image_agent = ImageAgent(settings)
         self._evaluator = EvaluatorAgent()
         self._audio_agent = AudioAgent(settings)
         self._web3_agent = Web3Agent(settings)
 
-        # Pub/Sub subscriber client (streaming pull)
         self._subscriber = pubsub_v1.SubscriberClient()
         self._subscription_path = self._subscriber.subscription_path(
             settings.gcp_project_id, settings.pubsub_subscription
         )
-
-    # ------------------------------------------------------------------ #
-    # Public API                                                           #
-    # ------------------------------------------------------------------ #
+        self._load_jobs()
 
     async def start(self) -> None:
-        """Begin processing messages from Pub/Sub indefinitely."""
         logger.info(
             "OrchestratorAgent starting; subscription=%s",
             self._subscription_path,
@@ -106,34 +96,23 @@ class OrchestratorAgent:
         await self._pull_loop()
 
     async def enqueue(self, user_id: str, preferences: dict[str, Any]) -> str:
-        """
-        Directly enqueue a job (bypasses Pub/Sub; used by the FastAPI layer
-        for low-latency local testing and the /generate endpoint).
-
-        Returns the new job_id.
-        """
         job_id = str(uuid.uuid4())
         job = GenerationJob(
             job_id=job_id,
             user_id=user_id,
             preferences=preferences,
+            mode=self._settings.execution_mode,
         )
         self._jobs[job_id] = job
+        self._persist_jobs()
         asyncio.create_task(self._run_pipeline(job))
         return job_id
 
     def get_job(self, job_id: str) -> GenerationJob | None:
-        """Return the current state of a job, or None if not found."""
         return self._jobs.get(job_id)
 
-    # ------------------------------------------------------------------ #
-    # Pub/Sub pull loop                                                    #
-    # ------------------------------------------------------------------ #
-
     async def _pull_loop(self) -> None:
-        """Pull messages in batches and dispatch pipeline tasks."""
         loop = asyncio.get_running_loop()
-
         while True:
             try:
                 response = await loop.run_in_executor(
@@ -152,25 +131,19 @@ class OrchestratorAgent:
                         job_id=msg_data.get("job_id", str(uuid.uuid4())),
                         user_id=msg_data["user_id"],
                         preferences=msg_data.get("preferences", {}),
+                        mode=self._settings.execution_mode,
                     )
                     self._jobs[job.job_id] = job
+                    self._persist_jobs()
                     asyncio.create_task(
-                        self._run_pipeline_with_ack(
-                            job,
-                            ack_id=received.ack_id,
-                        )
+                        self._run_pipeline_with_ack(job=job, ack_id=received.ack_id)
                     )
             except Exception:
                 logger.exception("Error in Pub/Sub pull loop; retrying in 5s")
                 await asyncio.sleep(5)
-
-            # Slight back-off to avoid tight empty-queue polling.
             await asyncio.sleep(0.5)
 
-    async def _run_pipeline_with_ack(
-        self, job: GenerationJob, ack_id: str
-    ) -> None:
-        """Run pipeline, then ack the Pub/Sub message on success."""
+    async def _run_pipeline_with_ack(self, job: GenerationJob, ack_id: str) -> None:
         loop = asyncio.get_running_loop()
         try:
             await self._run_pipeline(job)
@@ -188,59 +161,99 @@ class OrchestratorAgent:
         finally:
             self._semaphore.release()
 
-    # ------------------------------------------------------------------ #
-    # Pipeline                                                             #
-    # ------------------------------------------------------------------ #
-
     async def _run_pipeline(self, job: GenerationJob) -> None:
-        """Execute all pipeline stages in sequence."""
-        logger.info("Starting pipeline for job %s (user=%s)", job.job_id, job.user_id)
+        logger.info(
+            "Starting pipeline for job %s (user=%s, mode=%s)",
+            job.job_id,
+            job.user_id,
+            job.mode,
+        )
         try:
-            # Stage 1: Generate multiple 2D drafts in parallel.
-            job.stage = JobStage.DRAFTING
+            self._set_stage(job, JobStage.DRAFTING)
             job.draft_urls = await self._image_agent.generate_2d_drafts(
                 job.preferences,
                 count=self._settings.comfyui_draft_count,
             )
+            self._persist_jobs()
 
-            # Stage 2: Pick the best draft using the evaluator.
-            job.stage = JobStage.EVALUATING
-            job.selected_draft_url = await self._evaluator.select_best_draft(
-                job.draft_urls
-            )
+            self._set_stage(job, JobStage.EVALUATING)
+            job.selected_draft_url = await self._evaluator.select_best_draft(job.draft_urls)
+            self._persist_jobs()
 
-            # Stage 3: Upscale the selected draft.
-            job.stage = JobStage.UPSCALING
-            job.upscaled_url = await self._image_agent.upscale_draft(
-                job.selected_draft_url
-            )
+            self._set_stage(job, JobStage.UPSCALING)
+            job.upscaled_url = await self._image_agent.upscale_draft(job.selected_draft_url)
+            self._persist_jobs()
 
-            # Stage 4: Generate 3D Gaussian Splatting representation.
-            job.stage = JobStage.GENERATING_3DGS
-            job.threedgs_url = await self._image_agent.generate_3dgs(
-                job.upscaled_url
-            )
+            self._set_stage(job, JobStage.GENERATING_3DGS)
+            job.threedgs_url = await self._image_agent.generate_3dgs(job.upscaled_url)
+            self._persist_jobs()
 
-            # Stage 5: Generate audio soundscape.
-            job.stage = JobStage.GENERATING_AUDIO
-            character_role = job.preferences.get("role", "warrior")
-            job.audio_url = await self._audio_agent.generate_soundscape(
-                character_role
-            )
+            self._set_stage(job, JobStage.GENERATING_AUDIO)
+            character_role = str(job.preferences.get("role", "warrior"))
+            job.audio_url = await self._audio_agent.generate_soundscape(character_role)
+            self._persist_jobs()
 
-            # Stage 6: Gasless on-chain mint (only if user opted in).
             if job.preferences.get("mint_on_chain", False):
-                job.stage = JobStage.MINTING
+                self._set_stage(job, JobStage.MINTING)
                 job.nft_token_id = await self._web3_agent.mint_character(
-                    to_address=job.preferences["wallet_address"],
+                    to_address=str(job.preferences["wallet_address"]),
                     metadata_uri=job.threedgs_url,
                 )
+                self._persist_jobs()
 
-            job.stage = JobStage.COMPLETE
-            logger.info("Pipeline complete for job %s; token_id=%s", job.job_id, job.nft_token_id)
-
+            self._set_stage(job, JobStage.COMPLETE)
+            logger.info(
+                "Pipeline complete for job %s; token_id=%s",
+                job.job_id,
+                job.nft_token_id,
+            )
+            self._persist_jobs()
         except Exception as exc:
             job.stage = JobStage.FAILED
             job.error = str(exc)
+            job.updated_at_ms = int(time.time() * 1000)
             logger.exception("Pipeline failed for job %s", job.job_id)
+            self._persist_jobs()
             raise
+
+    def _set_stage(self, job: GenerationJob, next_stage: JobStage) -> None:
+        now_ms = int(time.time() * 1000)
+        if job.stage_started_at_ms > 0:
+            previous_stage = job.stage.value
+            previous_duration = max(0, now_ms - job.stage_started_at_ms)
+            job.stage_durations_ms[previous_stage] = previous_duration
+        job.stage = next_stage
+        job.stage_started_at_ms = now_ms
+        job.updated_at_ms = now_ms
+        logger.info("job=%s stage=%s", job.job_id, next_stage.value)
+
+    def _persist_jobs(self) -> None:
+        payload = {job_id: asdict(job) for job_id, job in self._jobs.items()}
+        self._store.save(payload)
+
+    def _load_jobs(self) -> None:
+        payload = self._store.load()
+        for job_id, raw in payload.items():
+            try:
+                stage_value = str(raw.get("stage", JobStage.FAILED.value))
+                job = GenerationJob(
+                    job_id=str(raw["job_id"]),
+                    user_id=str(raw["user_id"]),
+                    preferences=dict(raw.get("preferences", {})),
+                    stage=JobStage(stage_value),
+                    draft_urls=list(raw.get("draft_urls", [])),
+                    selected_draft_url=str(raw.get("selected_draft_url", "")),
+                    upscaled_url=str(raw.get("upscaled_url", "")),
+                    threedgs_url=str(raw.get("threedgs_url", "")),
+                    audio_url=str(raw.get("audio_url", "")),
+                    nft_token_id=raw.get("nft_token_id"),
+                    error=raw.get("error"),
+                    stage_started_at_ms=int(raw.get("stage_started_at_ms", 0)),
+                    stage_durations_ms=dict(raw.get("stage_durations_ms", {})),
+                    created_at_ms=int(raw.get("created_at_ms", int(time.time() * 1000))),
+                    updated_at_ms=int(raw.get("updated_at_ms", int(time.time() * 1000))),
+                    mode=str(raw.get("mode", self._settings.execution_mode)),
+                )
+                self._jobs[job_id] = job
+            except Exception:
+                logger.exception("Failed to load persisted job %s", job_id)

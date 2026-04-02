@@ -130,6 +130,10 @@ class Web3Agent:
             The newly minted token ID.
         """
         logger.info("Minting character NFT for %s", to_address)
+        if self._settings.execution_mode == "mock":
+            mock_token_id = int(AsyncWeb3.keccak(text=f"{to_address}:{metadata_uri}").hex()[-6:], 16)
+            logger.info("Mock minted token %d for %s", mock_token_id, to_address)
+            return mock_token_id
 
         if traits:
             call_data = self._nft_contract.encodeABI(
