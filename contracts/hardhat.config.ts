@@ -12,6 +12,8 @@ const DEPLOY_PRIVATE_KEY =
 
 const config: HardhatUserConfig = {
   solidity: {
+    // 0.8.24 is the highest patch that satisfies ^0.8.20 in all contracts.
+    // Pinned here for reproducibility; update carefully and re-run tests.
     version: "0.8.24",
     settings: {
       optimizer: {

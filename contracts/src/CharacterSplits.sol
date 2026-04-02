@@ -129,9 +129,20 @@ contract CharacterSplits is Ownable, ReentrancyGuard {
         uint256 remaining = balance - distributorShare;
 
         // Distribute remaining proportionally to recipients.
+        // Any integer-division dust is accumulated and forwarded to the last
+        // recipient, so no wei is ever permanently stranded in the contract.
+        uint256 distributed = 0;
+        uint256 recipientScale = ALLOCATION_SCALE - DISTRIBUTOR_FEE;
         for (uint256 i = 0; i < recipients.length; i++) {
             Recipient memory r = recipients[i];
-            uint256 share = (remaining * r.allocation) / (ALLOCATION_SCALE - DISTRIBUTOR_FEE);
+            uint256 share;
+            if (i == recipients.length - 1) {
+                // Last recipient gets any remaining dust to ensure full distribution.
+                share = remaining - distributed;
+            } else {
+                share = (remaining * r.allocation) / recipientScale;
+                distributed += share;
+            }
             if (share > 0) {
                 (bool ok,) = payable(r.account).call{value: share}("");
                 require(ok, "CharacterSplits: transfer failed");

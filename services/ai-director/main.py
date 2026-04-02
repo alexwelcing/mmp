@@ -66,13 +66,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# In production, set CORS_ALLOW_ORIGINS to a comma-separated list of
+# allowed origins (e.g. "https://yourgame.com,https://www.yourgame.com").
+# The wildcard default is only safe for local development.
+_cors_origins: list[str] = (
+    settings.cors_allow_origins.split(",")
+    if settings.cors_allow_origins != "*"
+    else ["*"]
+)
+
 app.add_middleware(
     CORSMiddleware,
-    # TODO: restrict to your domain in production, e.g.:
-    # allow_origins=["https://yourgame.com", "https://www.yourgame.com"],
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 

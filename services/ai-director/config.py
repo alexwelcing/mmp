@@ -110,10 +110,12 @@ class Settings(BaseSettings):
         description="Deployed CharacterSplits factory address",
     )
     # Private key for the AI Director's operational wallet.
-    # In production: mount from GCP Secret Manager, never hardcode.
+    # REQUIRED in staging/production: set AI_DIRECTOR_PRIVATE_KEY env var,
+    # ideally sourced from GCP Secret Manager via Secret Manager sidecar or
+    # Workload Identity + Secret Manager API.  Never hardcode in source.
     ai_director_private_key: str = Field(
-        "0x" + "0" * 64,  # zero key — replace via Secret Manager
-        description="Private key for the AI Director operational wallet",
+        ...,
+        description="Private key for the AI Director operational wallet (required)",
     )
 
     # ------------------------------------------------------------------ #
@@ -124,6 +126,12 @@ class Settings(BaseSettings):
     max_concurrent_jobs: int = Field(
         20,
         description="Max concurrent generation pipelines in this instance",
+    )
+    # CORS: set to a comma-separated list of allowed origins in production.
+    # e.g. "https://yourgame.com,https://www.yourgame.com"
+    cors_allow_origins: str = Field(
+        "*",
+        description="Comma-separated allowed CORS origins; use '*' for local dev only",
     )
 
 
