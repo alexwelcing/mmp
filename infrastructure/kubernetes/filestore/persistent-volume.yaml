@@ -1,0 +1,42 @@
+# PersistentVolume backed by GCP Filestore NFS.
+#
+# Replace FILESTORE_IP and SHARE_NAME with values from Terraform outputs:
+#   terraform output filestore_ip_address
+#   terraform output filestore_share_name
+#
+# ReadWriteMany access mode allows multiple ComfyUI worker pods to mount
+# the same volume simultaneously — essential for the shared model cache.
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: comfyui-models-pv
+  labels:
+    app: comfyui
+    type: filestore-nfs
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteMany  # Multiple pods can read/write concurrently
+  persistentVolumeReclaimPolicy: Retain  # Don't delete models on PVC delete
+  storageClassName: ""  # Static provisioning — no StorageClass needed
+
+  nfs:
+    server: FILESTORE_IP    # Replace with Terraform output
+    path: /comfyui_models   # Must match Filestore share name
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: comfyui-models-pvc
+  namespace: comfyui
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 1Ti
+  volumeName: comfyui-models-pv  # Bind to the specific PV above

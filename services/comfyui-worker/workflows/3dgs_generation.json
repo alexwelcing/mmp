@@ -1,0 +1,41 @@
+{
+  "_comment": "3D Gaussian Splatting generation workflow for ComfyUI.",
+  "_description": "Converts a 2D character image to a 3DGS scene using the ComfyUI-3D-Pack (SHARP model). The output is a .ply file containing 3D Gaussian primitives viewable in any 3DGS renderer.",
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "upscaled_character.png",
+      "input_image": ""
+    }
+  },
+  "2": {
+    "class_type": "TripoSRModelLoader",
+    "inputs": {
+      "model": "TripoSR",
+      "chunk_size": 8192
+    }
+  },
+  "3": {
+    "class_type": "TripoSRSampler",
+    "inputs": {
+      "model": ["2", 0],
+      "reference_image": ["1", 0],
+      "reference_mask": ["1", 1],
+      "geometry_resolution": 256,
+      "threshold": 25.0
+    }
+  },
+  "4": {
+    "class_type": "Preview3DModel",
+    "inputs": {
+      "mesh": ["3", 0]
+    }
+  },
+  "5": {
+    "class_type": "Save3DModel",
+    "inputs": {
+      "mesh": ["3", 0],
+      "filename_prefix": "3dgs_character_"
+    }
+  }
+}
