@@ -14,7 +14,7 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -35,7 +35,7 @@ _3DGS_WORKFLOW = _WORKFLOW_DIR / "3dgs_generation.json"
 def _load_workflow(path: Path) -> dict[str, Any]:
     """Load a ComfyUI workflow JSON file."""
     with open(path) as fh:
-        return json.load(fh)
+        return cast(dict[str, Any], json.load(fh))
 
 
 class ImageAgent:
@@ -235,7 +235,7 @@ class ImageAgent:
         for _node_id, node in workflow.items():
             if not isinstance(node, dict):
                 continue
-            inputs: dict = node.get("inputs", {})
+            inputs: dict[str, Any] = node.get("inputs", {})
             for key, value in parameters.items():
                 if key in inputs:
                     inputs[key] = value

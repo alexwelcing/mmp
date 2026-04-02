@@ -45,6 +45,20 @@ export function useWallet(): UseWalletReturn {
     error: null,
   });
 
+  const syncChainId = useCallback(async (address: string) => {
+    const provider = getProvider();
+    if (!provider) return;
+    const chainIdHex = await provider.request({ method: "eth_chainId" });
+    if (typeof chainIdHex !== "string") return;
+    setState({
+      address,
+      chainId: parseInt(chainIdHex, 16),
+      isConnected: true,
+      isConnecting: false,
+      error: null,
+    });
+  }, []);
+
   /** Read current account from the injected provider on mount. */
   useEffect(() => {
     const provider = getProvider();
@@ -53,15 +67,24 @@ export function useWallet(): UseWalletReturn {
     // Silently check if already connected (don't prompt the user).
     provider
       .request({ method: "eth_accounts" })
-      .then((accounts: string[]) => {
-        if (accounts.length > 0) {
-          void syncChainId(accounts[0]);
+      .then((accounts) => {
+        if (!Array.isArray(accounts)) return;
+        const accountStrings = accounts.filter(
+          (value): value is string => typeof value === "string"
+        );
+        if (accountStrings.length > 0) {
+          void syncChainId(accountStrings[0]);
         }
       })
       .catch(() => {/* no wallet connected — ignore */});
 
     // Listen for account / chain changes.
-    const handleAccountsChanged = (accounts: string[]) => {
+    const handleAccountsChanged = (...args: unknown[]) => {
+      const firstArg = args[0];
+      if (!Array.isArray(firstArg)) return;
+      const accounts = firstArg.filter(
+        (value): value is string => typeof value === "string"
+      );
       if (accounts.length === 0) {
         setState({ address: null, chainId: null, isConnected: false, isConnecting: false, error: null });
       } else {
@@ -78,19 +101,6 @@ export function useWallet(): UseWalletReturn {
     };
   }, [syncChainId]);
 
-  const syncChainId = useCallback(async (address: string) => {
-    const provider = getProvider();
-    if (!provider) return;
-    const chainIdHex: string = await provider.request({ method: "eth_chainId" }) as string;
-    setState({
-      address,
-      chainId: parseInt(chainIdHex, 16),
-      isConnected: true,
-      isConnecting: false,
-      error: null,
-    });
-  }, []);
-
   /** Prompt the user to connect their wallet. */
   const connect = useCallback(async () => {
     const provider = getProvider();
@@ -104,9 +114,18 @@ export function useWallet(): UseWalletReturn {
 
     setState((s) => ({ ...s, isConnecting: true, error: null }));
     try {
-      const accounts: string[] = await provider.request({
+      const accountsRaw = await provider.request({
         method: "eth_requestAccounts",
-      }) as string[];
+      });
+      if (!Array.isArray(accountsRaw)) {
+        throw new Error("Wallet returned invalid accounts payload");
+      }
+      const accounts = accountsRaw.filter(
+        (value): value is string => typeof value === "string"
+      );
+        if (accounts.length > 0) {
+          void syncChainId(accounts[0]);
+        }
       await syncChainId(accounts[0]);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Connection rejected";

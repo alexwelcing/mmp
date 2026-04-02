@@ -1,0 +1,12 @@
+{
+  "extends": "solhint:recommended",
+  "rules": {
+    "compiler-version": ["error", "^0.8.20"],
+    "func-visibility": "off",
+    "gas-custom-errors": "off",
+    "reason-string": "off",
+    "immutable-vars-naming": "off",
+    "one-contract-per-file": "off",
+    "no-inline-assembly": "off"
+  }
+}

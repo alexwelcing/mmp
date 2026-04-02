@@ -5,7 +5,7 @@
  * and provides sharing / on-chain ownership CTAs.
  */
 
-import React, { useState } from "react";
+import { useState } from "react";
 import type { Character } from "../../types/character";
 
 interface CharacterCardProps {

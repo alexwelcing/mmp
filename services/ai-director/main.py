@@ -23,7 +23,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from agents.orchestrator import OrchestratorAgent, JobStage
+from agents.orchestrator import JobStage, OrchestratorAgent
 from config import get_settings
 
 # -------------------------------------------------------------------- #
@@ -44,7 +44,7 @@ orchestrator = OrchestratorAgent(settings)
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(_app: FastAPI) -> Any:
     """Start the Pub/Sub pull loop in the background when the app boots."""
     import asyncio
 

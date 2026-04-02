@@ -82,10 +82,13 @@ class OrchestratorAgent:
         self._audio_agent = AudioAgent(settings)
         self._web3_agent = Web3Agent(settings)
 
-        self._subscriber = pubsub_v1.SubscriberClient()
-        self._subscription_path = self._subscriber.subscription_path(
-            settings.gcp_project_id, settings.pubsub_subscription
-        )
+        self._subscriber: pubsub_v1.SubscriberClient | None = None
+        self._subscription_path = ""
+        if settings.environment != "local":
+            self._subscriber = pubsub_v1.SubscriberClient()
+            self._subscription_path = self._subscriber.subscription_path(
+                settings.gcp_project_id, settings.pubsub_subscription
+            )
         self._load_jobs()
 
     async def start(self) -> None:
@@ -112,12 +115,14 @@ class OrchestratorAgent:
         return self._jobs.get(job_id)
 
     async def _pull_loop(self) -> None:
+        if self._subscriber is None:
+            raise RuntimeError("Pub/Sub subscriber is not initialized in local mode")
         loop = asyncio.get_running_loop()
         while True:
             try:
                 response = await loop.run_in_executor(
                     None,
-                    lambda: self._subscriber.pull(
+                    lambda: self._subscriber.pull(  # type: ignore[union-attr]
                         request={
                             "subscription": self._subscription_path,
                             "max_messages": self._settings.pubsub_max_messages,
@@ -144,12 +149,14 @@ class OrchestratorAgent:
             await asyncio.sleep(0.5)
 
     async def _run_pipeline_with_ack(self, job: GenerationJob, ack_id: str) -> None:
+        if self._subscriber is None:
+            raise RuntimeError("Pub/Sub subscriber is not initialized in local mode")
         loop = asyncio.get_running_loop()
         try:
             await self._run_pipeline(job)
             await loop.run_in_executor(
                 None,
-                lambda: self._subscriber.acknowledge(
+                lambda: self._subscriber.acknowledge(  # type: ignore[union-attr]
                     request={
                         "subscription": self._subscription_path,
                         "ack_ids": [ack_id],

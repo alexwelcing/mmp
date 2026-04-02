@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from eth_account import Account
 from eth_account.messages import encode_defunct
+from eth_typing import HexStr
 from web3 import AsyncWeb3
 from web3.types import TxReceipt
 
@@ -98,13 +99,12 @@ class Web3Agent:
         self._settings = settings
         self._w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(str(settings.base_rpc_url)))
         self._account = Account.from_key(settings.ai_director_private_key)
-
-        self._nft_contract = self._w3.eth.contract(
-            address=settings.character_nft_address,
+        self._nft_contract: Any = self._w3.eth.contract(
+            address=AsyncWeb3.to_checksum_address(settings.character_nft_address),
             abi=_CHARACTER_NFT_ABI,
         )
-        self._splits_contract = self._w3.eth.contract(
-            address=settings.splits_factory_address,
+        self._splits_contract: Any = self._w3.eth.contract(
+            address=AsyncWeb3.to_checksum_address(settings.splits_factory_address),
             abi=_SPLITS_ABI,
         )
 
@@ -297,12 +297,12 @@ class Web3Agent:
         if "error" in result:
             raise RuntimeError(f"Bundler error: {result['error']}")
 
-        return result["result"]
+        return cast(str, result["result"])
 
     async def _wait_for_receipt(self, tx_hash: str) -> TxReceipt:
         """Poll for a transaction receipt (30-second timeout)."""
         return await self._w3.eth.wait_for_transaction_receipt(
-            tx_hash, timeout=30
+            cast(HexStr, tx_hash), timeout=30
         )
 
     @staticmethod

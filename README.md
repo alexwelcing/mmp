@@ -1,6 +1,6 @@
 # 🎮 Autonomous AI Director: GCP-Native Pipeline for Web3 Game Asset Generation
 
-> **Tutorial Repository** — A production-quality reference implementation for building a real-time, AI-driven game asset pipeline with on-chain monetization on Base (Ethereum L2).
+> **Reference Prototype Repository** — A coherent, end-to-end prototype focused on one reliable happy path today, with explicit boundaries between real integrations and mocked flows.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -18,6 +18,23 @@ This project demonstrates a **Dual-Horizon Strategy** for Web3 game monetization
 | **H2 (Scale)** | On-chain character ownership + royalty splits | Sustainable revenue |
 
 Players claim a free AI-generated character (no wallet required), then optionally mint it on-chain with full ownership. An autonomous AI Director orchestrates the entire pipeline — from Pub/Sub request to on-chain NFT — using GCP-native services.
+
+---
+
+## ✅ Current Maturity Status (Honest Matrix)
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Product funnel UX | **Real (prototype)** | Free roll → reveal → upsell flow is implemented in frontend components. |
+| API happy path (`/generate` + `/status`) | **Real (prototype)** | Core path is wired and now uses explicit canonical contracts in `docs/api-contracts.md`. |
+| AI generation in local/demo mode | **Mocked (intentional)** | `EXECUTION_MODE=mock` returns deterministic mock asset URLs for reliable demos/tests. |
+| AI generation in integration mode | **Partial** | `EXECUTION_MODE=real` calls external ComfyUI/audio services; reliability depends on external infra. |
+| On-chain mint in local/demo mode | **Mocked (intentional)** | Mock token id generation for deterministic local flow validation. |
+| On-chain mint in integration mode | **Tutorial-grade** | Uses simplified ERC-4337 flow and requires hardening for production use. |
+| Job durability | **Real (basic)** | Job state persists to JSON file (`JOB_STATE_STORE_PATH`) and reloads on service start. |
+| Observability | **Basic** | Stage transitions + per-stage durations exposed via status response. |
+| Contracts | **Real (prototype)** | Contract suite and tests are present; deploy smoke test added. |
+| CI quality gate | **Real (baseline)** | Workflow runs services/frontend/contracts lint+build+tests. |
 
 ---
 
@@ -81,6 +98,13 @@ Players claim a free AI-generated character (no wallet required), then optionall
 git clone https://github.com/your-org/mmp.git
 cd mmp
 cp .env.example .env  # Fill in your GCP project, RPC URLs, etc.
+cp services/ai-director/.env.example services/ai-director/.env
+```
+
+For deterministic local demos, keep:
+
+```bash
+EXECUTION_MODE=mock
 ```
 
 ### 2. Start the AI Director
@@ -205,7 +229,19 @@ npx hardhat run scripts/deploy.ts --network base-sepolia
 | `BASE_RPC_URL` | Base L2 RPC endpoint |
 | `CHARACTER_NFT_ADDRESS` | Deployed CharacterNFT contract |
 | `PAYMASTER_ADDRESS` | Deployed AIDirectorPaymaster contract |
-| `SPLITS_ADDRESS` | Deployed CharacterSplits contract |
+| `SPLITS_FACTORY_ADDRESS` | Deployed CharacterSplits factory contract |
+| `EXECUTION_MODE` | `mock` for deterministic local flow, `real` for external integrations |
+| `JOB_STATE_STORE_PATH` | Persisted job-state path for restart durability |
+
+---
+
+## 📚 Key Docs
+
+- `docs/start-here.md` — fastest onboarding path
+- `docs/api-contracts.md` — canonical API/status contracts
+- `docs/system-map.md` — component responsibilities and key files
+- `docs/architecture.md` — architecture overview
+- `docs/onboarding-funnel.md` — funnel strategy
 
 ---
 

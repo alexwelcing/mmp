@@ -6,7 +6,7 @@
  * Firebase Auth or Auth0 for production.
  */
 
-import React, { useState } from "react";
+import { useState } from "react";
 
 interface FreeRollStepProps {
   onSubmit: () => Promise<void>;
