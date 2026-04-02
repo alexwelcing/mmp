@@ -1,0 +1,96 @@
+# Pod snapshot configuration for fast ComfyUI cold starts.
+#
+# gVisor (runsc) supports CRIU-based checkpointing on GKE.
+# After the first ComfyUI startup (model load ~90s), we snapshot the
+# pod memory state.  Subsequent starts restore from snapshot in ~5s.
+#
+# Usage:
+#   kubectl apply -f pod-snapshot.yaml
+#   # Trigger snapshot after first successful startup:
+#   kubectl exec -n comfyui <pod-name> -- /scripts/checkpoint.sh
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: comfyui-snapshot-scripts
+  namespace: comfyui
+data:
+  checkpoint.sh: |
+    #!/usr/bin/env bash
+    # Create a gVisor checkpoint of the running ComfyUI process.
+    # This script runs inside the pod after ComfyUI has fully loaded.
+    set -euo pipefail
+
+    CHECKPOINT_DIR="/mnt/filestore/checkpoints/comfyui"
+    mkdir -p "${CHECKPOINT_DIR}"
+
+    echo "Creating gVisor checkpoint..."
+    # runsc checkpoint stores process state to the filesystem.
+    # The pod must be running under gVisor (runsc) runtime.
+    runsc checkpoint --image-path="${CHECKPOINT_DIR}" --leave-running
+
+    echo "Checkpoint saved to ${CHECKPOINT_DIR}"
+
+  restore.sh: |
+    #!/usr/bin/env bash
+    # Restore ComfyUI from a gVisor checkpoint.
+    set -euo pipefail
+
+    CHECKPOINT_DIR="/mnt/filestore/checkpoints/comfyui"
+
+    if [ -d "${CHECKPOINT_DIR}" ]; then
+      echo "Restoring from checkpoint..."
+      runsc restore --image-path="${CHECKPOINT_DIR}"
+    else
+      echo "No checkpoint found; starting fresh."
+      python /app/ComfyUI/main.py --listen 0.0.0.0 --port 8188
+    fi
+
+---
+# Pod template with gVisor sandbox annotation.
+# Reference: use this spec in the KEDA ScaledJob template.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: comfyui-snapshot-reference
+  namespace: comfyui
+  annotations:
+    # Tell containerd to use the gVisor runtime class.
+    io.kubernetes.cri-o.SandboxConfig: gvisor
+spec:
+  runtimeClassName: gvisor  # Must be configured on the GKE node pool
+
+  nodeSelector:
+    pool: gpu
+
+  tolerations:
+    - key: "nvidia.com/gpu"
+      operator: "Exists"
+      effect: "NoSchedule"
+
+  containers:
+    - name: comfyui
+      image: us-central1-docker.pkg.dev/YOUR_PROJECT/mmp-images/comfyui-worker:latest
+      command: ["/scripts/restore.sh"]
+
+      resources:
+        requests:
+          nvidia.com/gpu: "1"
+        limits:
+          nvidia.com/gpu: "1"
+
+      volumeMounts:
+        - name: filestore
+          mountPath: /mnt/filestore
+        - name: snapshot-scripts
+          mountPath: /scripts
+          defaultMode: 0755
+
+  volumes:
+    - name: filestore
+      persistentVolumeClaim:
+        claimName: comfyui-models-pvc
+    - name: snapshot-scripts
+      configMap:
+        name: comfyui-snapshot-scripts
+        defaultMode: 0755
