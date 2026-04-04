@@ -1,0 +1,39 @@
+# Non-sensitive configuration for the AI Director.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-director-config
+  namespace: ai-director
+data:
+  # GCP
+  GCP_PROJECT_ID: "REPLACE_WITH_YOUR_PROJECT_ID"
+  GCP_REGION: "us-central1"
+  ENVIRONMENT: "staging"
+  LOG_LEVEL: "INFO"
+  MAX_CONCURRENT_JOBS: "20"
+
+  # Pub/Sub
+  PUBSUB_TOPIC: "asset-generation-requests-staging"
+  PUBSUB_SUBSCRIPTION: "asset-generation-requests-sub-staging"
+  PUBSUB_MAX_MESSAGES: "10"
+
+  # Filestore / Shared Storage
+  FILESTORE_MOUNT_PATH: "/mnt/filestore"
+  OUTPUT_BASE_PATH: "/mnt/filestore/outputs"
+
+  # ComfyUI
+  COMFYUI_ENDPOINT: "http://comfyui-service.comfyui.svc.cluster.local:8188"
+  COMFYUI_TIMEOUT_SECONDS: "120"
+  COMFYUI_DRAFT_COUNT: "4"
+
+  # Audio
+  AUDIO_MODEL: "moshi"
+  AUDIO_ENDPOINT: "http://audio-service.ai-director.svc.cluster.local:9000"
+
+  # Web3 / Base L2
+  BASE_RPC_URL: "https://sepolia.base.org"
+  BUNDLER_URL: "https://api.pimlico.io/v2/base-sepolia/rpc"
+
+  # CORS: comma-separated list of allowed origins in production.
+  CORS_ALLOW_ORIGINS: "*"

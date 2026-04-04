@@ -103,6 +103,7 @@ export interface GenerationStatus {
   audioUrl: string;
   nftTokenId: number | null;
   error: string | null;
+  traits: CharacterTraits;
 }
 
 // ── UI flow types ─────────────────────────────────────────────────────

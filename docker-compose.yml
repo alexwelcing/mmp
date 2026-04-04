@@ -1,0 +1,168 @@
+# MMP Local Development Stack
+#
+# Usage:
+#   docker compose up --build comfyui          # Run only ComfyUI (heavy GPU workload)
+#   docker compose up --build                  # Run everything in Docker
+#   docker compose --profile full up --build   # Run everything including Hardhat node
+#
+# For the best dev experience, run the AI Director and Frontend natively:
+#   make dev-native
+
+version: "3.9"
+
+services:
+  # ── ComfyUI Worker ────────────────────────────────────────────────────────
+  # The only service that really benefits from Docker locally due to its
+  # complex Python dependency tree and custom node packs.
+  comfyui:
+    build:
+      context: ./services/comfyui-worker
+      dockerfile: Dockerfile
+    container_name: mmp-comfyui
+    ports:
+      - "8188:8188"
+    volumes:
+      - comfyui-models:/mnt/filestore/models
+      - comfyui-outputs:/mnt/filestore/outputs
+    environment:
+      - AI_DIRECTOR_WEBHOOK_URL=http://host.docker.internal:8080/webhook/comfyui
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8188/system_stats"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - mmp-local
+
+  # ── Audio Worker ─────────────────────────────────────────────────────────
+  # Facebook AudioGen via Hugging Face Hub.  Model cache is persisted
+  # so the ~1.3 GB download only happens on first startup.
+  audio:
+    build:
+      context: ./services/audio-worker
+      dockerfile: Dockerfile
+    container_name: mmp-audio
+    ports:
+      - "9000:9000"
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+      - comfyui-outputs:/mnt/filestore/outputs
+    environment:
+      - HF_HUB_CACHE=/root/.cache/huggingface
+    restart: unless-stopped
+    networks:
+      - mmp-local
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  # ── AI Director ───────────────────────────────────────────────────────────
+  # Optionally run inside Docker.  Most developers prefer running this
+  # natively with `uvicorn` for faster Python hot-reload.
+  ai-director:
+    build:
+      context: ./services/ai-director
+      dockerfile: Dockerfile
+    container_name: mmp-ai-director
+    ports:
+      - "8080:8080"
+    volumes:
+      - comfyui-outputs:/mnt/filestore/outputs
+      - ./services/ai-director:/app
+      - ./services/comfyui-worker/workflows:/app/workflows:ro
+    environment:
+      - ENVIRONMENT=local
+      - GCP_PROJECT_ID=local-dev
+      - COMFYUI_ENDPOINT=http://comfyui:8188
+      - COMFYUI_WORKFLOWS_DIR=/app/workflows
+      - AUDIO_ENDPOINT=http://audio:9000
+      - BASE_RPC_URL=http://hardhat:8545
+      - BUNDLER_URL=http://hardhat:8545
+      - CORS_ALLOW_ORIGINS=*
+      - AI_DIRECTOR_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+    env_file:
+      - .env
+    depends_on:
+      comfyui:
+        condition: service_healthy
+      audio:
+        condition: service_healthy
+      hardhat:
+        condition: service_started
+    networks:
+      - mmp-local
+    profiles:
+      - docker-ai-director
+
+  # ── Hardhat Local Node ────────────────────────────────────────────────────
+  # Local EVM fork for contract development and Web3 integration testing.
+  hardhat:
+    build:
+      context: ./contracts
+      dockerfile: ../infrastructure/local/hardhat.Dockerfile
+    container_name: mmp-hardhat
+    ports:
+      - "8545:8545"
+    volumes:
+      - hardhat-cache:/app/cache
+      - ./contracts:/app
+    restart: unless-stopped
+    networks:
+      - mmp-local
+    profiles:
+      - full
+
+  # ── ReSplat Worker (optional) ─────────────────────────────────────────────
+  # Requires CUDA 12.8.  Performs full image → multi-view → COLMAP → 3DGS.
+  resplat:
+    build:
+      context: ./services/resplat-worker
+      dockerfile: Dockerfile
+    container_name: mmp-resplat
+    ports:
+      - "9001:9001"
+    volumes:
+      - resplat-models:/mnt/filestore/resplat/pretrained
+      - resplat-outputs:/mnt/filestore/resplat/outputs
+      - comfyui-outputs:/mnt/filestore/outputs:ro
+      - huggingface-cache:/root/.cache/huggingface
+    environment:
+      - HF_HUB_CACHE=/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    networks:
+      - mmp-local
+    profiles:
+      - resplat
+
+volumes:
+  comfyui-models:
+  comfyui-outputs:
+  hardhat-cache:
+  huggingface-cache:
+  resplat-models:
+  resplat-outputs:
+
+networks:
+  mmp-local:
+    driver: bridge

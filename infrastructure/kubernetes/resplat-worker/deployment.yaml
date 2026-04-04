@@ -1,0 +1,77 @@
+# ReSplat Worker deployment.
+# Runs on GPU nodes because ReSplat inference requires CUDA.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resplat-worker
+  namespace: resplat
+  labels:
+    app: resplat-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: resplat-worker
+  template:
+    metadata:
+      labels:
+        app: resplat-worker
+    spec:
+      nodeSelector:
+        pool: gpu
+
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      containers:
+        - name: resplat
+          # Replace YOUR_REGISTRY with your Artifact Registry location.
+          image: YOUR_REGISTRY/mmp-images/resplat-worker:latest
+          imagePullPolicy: Always
+
+          ports:
+            - name: http
+              containerPort: 9001
+              protocol: TCP
+
+          env:
+            - name: RESPLAT_MODEL
+              value: "resplat_re10k.pt"
+
+          resources:
+            requests:
+              cpu: "2"
+              memory: "8Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "4"
+              memory: "16Gi"
+              nvidia.com/gpu: "1"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+
+          volumeMounts:
+            - name: filestore-resplat
+              mountPath: /mnt/filestore
+
+      volumes:
+        - name: filestore-resplat
+          persistentVolumeClaim:
+            claimName: resplat-models-pvc

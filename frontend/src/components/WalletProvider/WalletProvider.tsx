@@ -6,13 +6,14 @@
  * the useWalletContext() hook.
  */
 
-import React, { createContext, useContext } from "react";
+import type { ReactNode } from "react";
+import { createContext, useContext } from "react";
 import { useWallet, type UseWalletReturn } from "../../hooks/useWallet";
 
 const WalletContext = createContext<UseWalletReturn | null>(null);
 
 interface WalletProviderProps {
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
 /** Provides wallet connection state to all children. */

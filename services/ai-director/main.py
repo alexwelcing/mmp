@@ -23,7 +23,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from agents.orchestrator import OrchestratorAgent, JobStage
+from agents.orchestrator import OrchestratorAgent, JobStage, _ROLES, _AESTHETICS, _RARITIES
 from config import get_settings
 
 # -------------------------------------------------------------------- #
@@ -68,12 +68,11 @@ app = FastAPI(
 
 # In production, set CORS_ALLOW_ORIGINS to a comma-separated list of
 # allowed origins (e.g. "https://yourgame.com,https://www.yourgame.com").
-# The wildcard default is only safe for local development.
-_cors_origins: list[str] = (
-    settings.cors_allow_origins.split(",")
-    if settings.cors_allow_origins != "*"
-    else ["*"]
-)
+# The wildcard is only permitted in local development.
+if settings.cors_allow_origins == "*":
+    _cors_origins: list[str] = ["*"] if settings.environment == "local" else []
+else:
+    _cors_origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
@@ -119,12 +118,17 @@ class StatusResponse(BaseModel):
     audio_url: str
     nft_token_id: int | None
     error: str | None
+    traits: dict[str, str] = Field(default_factory=dict)
+
+
+class MintRequest(BaseModel):
+    wallet_address: str = Field(..., description="Recipient wallet address")
+    tier: str = Field("free", description="Mint tier: free | random | custom")
 
 
 class ComfyUIWebhookPayload(BaseModel):
-    prompt_id: str
+    client_id: str
     job_id: str
-    output_urls: list[str]
     node_type: str = "image"  # "image" | "3dgs"
 
 
@@ -186,6 +190,65 @@ async def get_status(job_id: str) -> StatusResponse:
         audio_url=job.audio_url,
         nft_token_id=job.nft_token_id,
         error=job.error,
+        traits=job.traits,
+    )
+
+
+@app.post("/mint/{job_id}", response_model=StatusResponse)
+async def mint_job(job_id: str, request: MintRequest) -> StatusResponse:
+    """
+    Mint an already-completed character on-chain.
+
+    The job must be in the ``complete`` stage and not already minted.
+    """
+    job = orchestrator.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    if job.stage != JobStage.COMPLETE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job {job_id} is not complete (current stage: {job.stage.value})",
+        )
+    if job.nft_token_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job {job_id} is already minted (token {job.nft_token_id})",
+        )
+
+    traits: dict[str, int] | None = None
+    if request.tier == "custom" and job.traits:
+        traits = {
+            "role": _ROLES.index(job.traits["role"]),
+            "aesthetic": _AESTHETICS.index(job.traits["aesthetic"]),
+            "rarity": _RARITIES.index(job.traits["rarity"]),
+        }
+
+    try:
+        job.stage = JobStage.MINTING
+        token_id = await orchestrator._web3_agent.mint_character(
+            to_address=request.wallet_address,
+            metadata_uri=job.threedgs_url or job.upscaled_url,
+            traits=traits,
+            tier=request.tier,
+        )
+        job.nft_token_id = token_id
+        job.stage = JobStage.COMPLETE
+        logger.info("Minted job %s as token %d", job_id, token_id)
+    except Exception as exc:
+        job.stage = JobStage.COMPLETE  # revert so user can retry
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return StatusResponse(
+        job_id=job.job_id,
+        stage=job.stage.value,
+        draft_urls=job.draft_urls,
+        selected_draft_url=job.selected_draft_url,
+        upscaled_url=job.upscaled_url,
+        threedgs_url=job.threedgs_url,
+        audio_url=job.audio_url,
+        nft_token_id=job.nft_token_id,
+        error=job.error,
+        traits=job.traits,
     )
 
 
@@ -194,28 +257,20 @@ async def comfyui_webhook(payload: ComfyUIWebhookPayload) -> dict[str, str]:
     """
     Receive completion notifications from ComfyUI workers.
 
-    ComfyUI Jobs POST to this endpoint when a prompt finishes, allowing
-    the orchestrator to advance the pipeline immediately without polling.
+    The AIDirectorWebhook custom node inside ComfyUI POSTs here when a
+    prompt finishes.  We signal the waiting ``ImageAgent`` poll loop so
+    it can fetch outputs immediately instead of waiting for the next poll.
     """
     logger.info(
-        "ComfyUI webhook received: job=%s, prompt=%s, outputs=%d",
+        "ComfyUI webhook received: job=%s, client=%s, node_type=%s",
         payload.job_id,
-        payload.prompt_id,
-        len(payload.output_urls),
+        payload.client_id,
+        payload.node_type,
     )
 
-    job = orchestrator.get_job(payload.job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail=f"Job {payload.job_id} not found")
+    from agents.image_agent import ImageAgent
 
-    # Update the appropriate URL field based on which node type completed.
-    if payload.node_type == "image" and job.stage == JobStage.DRAFTING:
-        job.draft_urls.extend(payload.output_urls)
-    elif payload.node_type == "image" and job.stage == JobStage.UPSCALING:
-        job.upscaled_url = payload.output_urls[0] if payload.output_urls else ""
-    elif payload.node_type == "3dgs":
-        job.threedgs_url = payload.output_urls[0] if payload.output_urls else ""
-
+    ImageAgent.handle_webhook(payload.client_id)
     return {"status": "acknowledged"}
 
 

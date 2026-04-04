@@ -24,3 +24,11 @@ metadata:
   labels:
     app.kubernetes.io/part-of: mmp
     environment: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: resplat
+  labels:
+    app.kubernetes.io/part-of: mmp
+    environment: production

@@ -74,7 +74,7 @@ spec:
 
         containers:
           - name: comfyui
-            image: us-central1-docker.pkg.dev/YOUR_PROJECT/mmp-images/comfyui-worker:latest
+            image: ${REGION}-docker.pkg.dev/${PROJECT_ID}/mmp-images/comfyui-worker:latest
             imagePullPolicy: Always
 
             resources:

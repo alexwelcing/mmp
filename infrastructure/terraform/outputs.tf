@@ -30,6 +30,11 @@ output "pubsub_subscription_name" {
   value       = module.pubsub.subscription_name
 }
 
+output "ai_director_service_account_email" {
+  description = "Google Service Account email for the AI Director Workload Identity binding."
+  value       = module.gke.ai_director_service_account_email
+}
+
 output "artifact_registry_url" {
   description = "Docker image registry URL for pushing service images."
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/mmp-images"

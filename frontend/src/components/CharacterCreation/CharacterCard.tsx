@@ -5,11 +5,14 @@
  * and provides sharing / on-chain ownership CTAs.
  */
 
-import React, { useState } from "react";
+import { useState } from "react";
+import { GaussianSplatViewer } from "../ThreeDViewer/GaussianSplatViewer";
 import type { Character } from "../../types/character";
 
 interface CharacterCardProps {
   character: Character;
+  onMint?: () => void;
+  isLoading?: boolean;
 }
 
 const RARITY_COLORS: Record<string, string> = {
@@ -20,7 +23,7 @@ const RARITY_COLORS: Record<string, string> = {
   Legendary: "#f59e0b",
 };
 
-export function CharacterCard({ character }: CharacterCardProps) {
+export function CharacterCard({ character, onMint, isLoading }: CharacterCardProps) {
   const [viewMode, setViewMode] = useState<"2d" | "3d">("2d");
   const [copied, setCopied] = useState(false);
 
@@ -79,22 +82,33 @@ export function CharacterCard({ character }: CharacterCardProps) {
         <ViewToggle label="3D View" active={viewMode === "3d"} onClick={() => setViewMode("3d")} />
       </div>
 
-      {/* Asset display */}
+      {/* Asset display — both views are rendered but only one is visible.
+          Keeping the 3D viewer mounted avoids re-loading the .ply when the
+          user toggles back from 2D. */}
       <div
         style={{
+          position: "relative",
           borderRadius: "16px",
           overflow: "hidden",
           marginBottom: "1.25rem",
           border: `1px solid ${rarityColor}33`,
           minHeight: "280px",
           background: "rgba(0,0,0,0.3)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
         }}
       >
-        {viewMode === "2d" ? (
-          character.imageUrl ? (
+        <div
+          style={{
+            position: viewMode === "2d" ? "relative" : "absolute",
+            inset: 0,
+            opacity: viewMode === "2d" ? 1 : 0,
+            pointerEvents: viewMode === "2d" ? "auto" : "none",
+            transition: "opacity 0.2s",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {character.imageUrl ? (
             <img
               src={character.imageUrl}
               alt={character.name}
@@ -102,10 +116,20 @@ export function CharacterCard({ character }: CharacterCardProps) {
             />
           ) : (
             <PlaceholderArt role={character.traits.role} />
-          )
-        ) : (
+          )}
+        </div>
+
+        <div
+          style={{
+            position: viewMode === "3d" ? "relative" : "absolute",
+            inset: 0,
+            opacity: viewMode === "3d" ? 1 : 0,
+            pointerEvents: viewMode === "3d" ? "auto" : "none",
+            transition: "opacity 0.2s",
+          }}
+        >
           <ThreeDViewer threedgsUrl={character.threedgsUrl} name={character.name} />
-        )}
+        </div>
       </div>
 
       {/* Trait pills */}
@@ -147,6 +171,8 @@ export function CharacterCard({ character }: CharacterCardProps) {
 
         {character.tokenId === undefined && (
           <button
+            onClick={onMint}
+            disabled={isLoading}
             style={{
               flex: 1,
               background: "linear-gradient(135deg, #7c3aed, #a78bfa)",
@@ -154,12 +180,13 @@ export function CharacterCard({ character }: CharacterCardProps) {
               borderRadius: "12px",
               padding: "0.75rem",
               color: "#fff",
-              cursor: "pointer",
+              cursor: isLoading ? "not-allowed" : "pointer",
+              opacity: isLoading ? 0.6 : 1,
               fontWeight: 700,
               fontSize: "0.9375rem",
             }}
           >
-            🔗 Own On-Chain
+            {isLoading ? "⏳ Minting…" : "🔗 Own On-Chain"}
           </button>
         )}
       </div>
@@ -254,23 +281,30 @@ function ThreeDViewer({ threedgsUrl, name }: { threedgsUrl: string; name: string
     );
   }
 
-  // In production: use a WebGL-based 3DGS viewer (e.g. gaussian-splats-3d library).
+  const isPly = threedgsUrl.endsWith(".ply");
+
   return (
-    <div style={{ textAlign: "center", padding: "2rem" }}>
-      <div style={{ fontSize: "3rem", marginBottom: "0.5rem" }}>🌐</div>
-      <p style={{ color: "#a78bfa", fontWeight: 600, margin: "0 0 0.25rem" }}>{name}</p>
-      <p style={{ color: "#475569", margin: 0, fontSize: "0.8rem" }}>
-        3D viewer coming soon
-        <br />
-        <a
-          href={threedgsUrl}
-          target="_blank"
-          rel="noreferrer"
-          style={{ color: "#60a5fa" }}
-        >
-          Download .ply file
-        </a>
-      </p>
+    <div style={{ width: "100%", height: "100%", minHeight: "280px" }}>
+      {isPly ? (
+        <GaussianSplatViewer url={threedgsUrl} />
+      ) : (
+        <div style={{ textAlign: "center", padding: "2rem" }}>
+          <div style={{ fontSize: "3rem", marginBottom: "0.5rem" }}>🌐</div>
+          <p style={{ color: "#a78bfa", fontWeight: 600, margin: "0 0 0.25rem" }}>{name}</p>
+          <p style={{ color: "#475569", margin: 0, fontSize: "0.8rem" }}>
+            3D mesh format (not .ply)
+            <br />
+            <a
+              href={threedgsUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "#60a5fa" }}
+            >
+              Download 3D file
+            </a>
+          </p>
+        </div>
+      )}
     </div>
   );
 }

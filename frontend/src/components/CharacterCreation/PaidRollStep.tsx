@@ -6,7 +6,8 @@
  * In production: integrate Stripe.js + server-side USDC conversion.
  */
 
-import React, { useState } from "react";
+import type { FormEvent, CSSProperties } from "react";
+import { useState } from "react";
 import type { MintTier, CharacterTraits, Role, Aesthetic } from "../../types/character";
 
 interface PaidRollStepProps {
@@ -27,7 +28,7 @@ export function PaidRollStep({ onSubmit, isLoading }: PaidRollStepProps) {
   const [cvv, setCvv] = useState("");
   const [paymentError, setPaymentError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setPaymentError(null);
 
@@ -235,7 +236,7 @@ function TraitSelector({ label, options, value, onChange }: TraitSelectorProps) 
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-const inputStyle: React.CSSProperties = {
+const inputStyle: CSSProperties = {
   width: "100%",
   background: "rgba(255,255,255,0.05)",
   border: "1px solid rgba(255,255,255,0.1)",

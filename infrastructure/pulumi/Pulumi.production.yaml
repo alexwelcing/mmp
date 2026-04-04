@@ -1,0 +1,6 @@
+config:
+  mmp:environment: production
+  mmp:region: us-central1
+  mmp:zone: us-central1-a
+  mmp:filestore_tier: ENTERPRISE
+  mmp:api_domain: api.example.com

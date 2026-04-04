@@ -1,0 +1,19 @@
+# ClusterIP service for the AI Director.
+# Exposed externally via the Ingress below.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-director
+  namespace: ai-director
+  labels:
+    app: ai-director
+spec:
+  type: ClusterIP
+  selector:
+    app: ai-director
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP

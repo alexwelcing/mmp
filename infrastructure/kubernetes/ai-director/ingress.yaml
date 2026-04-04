@@ -1,0 +1,34 @@
+# GCE Ingress for external traffic to the AI Director.
+#
+# Requirements:
+#   - GKE cluster must have the HTTP Load Balancing add-on enabled.
+#   - Replace HOST_NAME with your actual domain (or remove the host rule
+#     to use the Load Balancer IP directly).
+#
+# To get the external IP after creation:
+#   kubectl get ingress ai-director -n ai-director
+#
+# If you prefer NGINX Ingress, change the class to "nginx" and ensure the
+# NGINX Ingress Controller is installed in the cluster.
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-director
+  namespace: ai-director
+  annotations:
+    kubernetes.io/ingress.class: gce
+    # GCE performs health checks on the Service NodePort target.
+    # The /health endpoint in the AI Director satisfies this.
+spec:
+  rules:
+    - host: api.example.com  # Replace with your domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ai-director
+                port:
+                  number: 8080

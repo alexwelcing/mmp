@@ -57,6 +57,15 @@ _CHARACTER_NFT_ABI = json.loads("""[
        ]}
     ],
     "outputs": [{"name": "tokenId", "type": "uint256"}]
+  },
+  {
+    "name": "setTokenURI",
+    "type": "function",
+    "inputs": [
+      {"name": "tokenId", "type": "uint256"},
+      {"name": "uri", "type": "string"}
+    ],
+    "outputs": []
   }
 ]""")
 
@@ -86,6 +95,37 @@ _SPLITS_ABI = json.loads("""[
   }
 ]""")
 
+# Canonical ERC-4337 v0.6 EntryPoint — used to compute the proper UserOp hash.
+_ENTRYPOINT_ADDRESS = "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"
+
+_ENTRYPOINT_ABI = json.loads("""[
+  {
+    "inputs": [
+      {
+        "components": [
+          {"name": "sender", "type": "address"},
+          {"name": "nonce", "type": "uint256"},
+          {"name": "initCode", "type": "bytes"},
+          {"name": "callData", "type": "bytes"},
+          {"name": "callGasLimit", "type": "uint256"},
+          {"name": "verificationGasLimit", "type": "uint256"},
+          {"name": "preVerificationGas", "type": "uint256"},
+          {"name": "maxFeePerGas", "type": "uint256"},
+          {"name": "maxPriorityFeePerGas", "type": "uint256"},
+          {"name": "paymasterAndData", "type": "bytes"},
+          {"name": "signature", "type": "bytes"}
+        ],
+        "name": "userOp",
+        "type": "tuple"
+      }
+    ],
+    "name": "getUserOpHash",
+    "outputs": [{"name": "", "type": "bytes32"}],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]""")
+
 
 class Web3Agent:
     """
@@ -98,6 +138,7 @@ class Web3Agent:
         self._settings = settings
         self._w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(str(settings.base_rpc_url)))
         self._account = Account.from_key(settings.ai_director_private_key)
+        self._local_mode = settings.environment == "local"
 
         self._nft_contract = self._w3.eth.contract(
             address=settings.character_nft_address,
@@ -106,6 +147,10 @@ class Web3Agent:
         self._splits_contract = self._w3.eth.contract(
             address=settings.splits_factory_address,
             abi=_SPLITS_ABI,
+        )
+        self._entrypoint = self._w3.eth.contract(
+            address=_ENTRYPOINT_ADDRESS,
+            abi=_ENTRYPOINT_ABI,
         )
 
     # ------------------------------------------------------------------ #
@@ -117,6 +162,7 @@ class Web3Agent:
         to_address: str,
         metadata_uri: str,
         traits: dict[str, int] | None = None,
+        tier: str = "free",
     ) -> int:
         """
         Mint a CharacterNFT to `to_address` via a gasless ERC-4337 UserOp.
@@ -125,16 +171,22 @@ class Web3Agent:
             to_address:   Recipient wallet address (checksummed).
             metadata_uri: IPFS / Filestore URL for the character's metadata.
             traits:       Optional trait overrides for custom mints.
+            tier:         "free", "random", or "custom".
 
         Returns:
             The newly minted token ID.
         """
-        logger.info("Minting character NFT for %s", to_address)
+        logger.info("Minting character NFT for %s (tier=%s)", to_address, tier)
 
-        if traits:
+        if tier == "custom" and traits:
             call_data = self._nft_contract.encodeABI(
                 fn_name="mintCustom",
                 args=[to_address, (traits["role"], traits["aesthetic"], traits["rarity"])],
+            )
+        elif tier == "random":
+            call_data = self._nft_contract.encodeABI(
+                fn_name="mintRandom",
+                args=[to_address],
             )
         else:
             call_data = self._nft_contract.encodeABI(
@@ -149,6 +201,20 @@ class Web3Agent:
 
         receipt = await self._wait_for_receipt(tx_hash)
         token_id = self._parse_token_id_from_receipt(receipt)
+
+        # Attach metadata URI in a second transaction.
+        if metadata_uri:
+            set_uri_data = self._nft_contract.encodeABI(
+                fn_name="setTokenURI",
+                args=[token_id, metadata_uri],
+            )
+            uri_tx_hash = await self._submit_user_operation(
+                target=self._settings.character_nft_address,
+                call_data=set_uri_data,
+            )
+            await self._wait_for_receipt(uri_tx_hash)
+            logger.info("Set token URI for token %d, tx=%s", token_id, uri_tx_hash)
+
         logger.info("Minted token %d, tx=%s", token_id, tx_hash)
         return token_id
 
@@ -241,36 +307,62 @@ class Web3Agent:
         """
         Build, sign, and submit an ERC-4337 UserOperation via the bundler.
 
-        For this tutorial we use a simplified UserOp structure.  In
-        production use the eth-account / eth-abi libraries together with
-        your bundler SDK (Pimlico viem plugin, Stackup client, etc.).
+        In local development mode we bypass the bundler and send a direct
+        EOA transaction instead — no EntryPoint or paymaster is required.
 
         Returns:
             The transaction hash once the bundler submits the UserOp.
         """
         if isinstance(call_data, bytes):
             call_data = call_data.hex()
+        call_data_hex = call_data if call_data.startswith("0x") else f"0x{call_data}"
+
+        if self._local_mode:
+            return await self._send_direct_transaction(target, call_data_hex)
 
         nonce = await self._w3.eth.get_transaction_count(self._account.address)
 
+        # Build the UserOp tuple exactly as EntryPoint expects.
         user_op: dict[str, Any] = {
             "sender": self._account.address,
-            "nonce": hex(nonce),
+            "nonce": nonce,
             "initCode": "0x",
-            "callData": call_data if call_data.startswith("0x") else f"0x{call_data}",
-            "callGasLimit": hex(200_000),
-            "verificationGasLimit": hex(150_000),
-            "preVerificationGas": hex(21_000),
-            "maxFeePerGas": hex(await self._w3.eth.gas_price),
-            "maxPriorityFeePerGas": hex(1_000_000_000),
-            "paymasterAndData": self._settings.paymaster_address + "0" * 128,
-            "signature": "0x",
+            "callData": call_data_hex,
+            "callGasLimit": 200_000,
+            "verificationGasLimit": 150_000,
+            "preVerificationGas": 21_000,
+            "maxFeePerGas": await self._w3.eth.gas_price,
+            "maxPriorityFeePerGas": 1_000_000_000,
+            "paymasterAndData": (
+                self._settings.paymaster_address
+                if self._settings.paymaster_address
+                else "0x"
+            ),
+            "signature": b"",
         }
 
-        # Sign the UserOp hash (simplified; use a proper EIP-712 signer in prod).
-        op_hash = AsyncWeb3.keccak(text=str(user_op))
+        # Ask the EntryPoint for the canonical hash (includes chain ID).
+        op_hash = await self._entrypoint.functions.getUserOpHash(user_op).call()
+        logger.debug("UserOp hash: %s", op_hash.hex())
+
+        # Sign the 32-byte hash directly (ERC-191 style via encode_defunct).
         signed = self._account.sign_message(encode_defunct(op_hash))
-        user_op["signature"] = signed.signature.hex()
+        user_op["signature"] = signed.signature
+
+        # Hex-ify for JSON-RPC (bundler expects hex strings).
+        user_op_hex: dict[str, Any] = {
+            "sender": user_op["sender"],
+            "nonce": hex(user_op["nonce"]),
+            "initCode": user_op["initCode"],
+            "callData": user_op["callData"],
+            "callGasLimit": hex(user_op["callGasLimit"]),
+            "verificationGasLimit": hex(user_op["verificationGasLimit"]),
+            "preVerificationGas": hex(user_op["preVerificationGas"]),
+            "maxFeePerGas": hex(user_op["maxFeePerGas"]),
+            "maxPriorityFeePerGas": hex(user_op["maxPriorityFeePerGas"]),
+            "paymasterAndData": user_op["paymasterAndData"],
+            "signature": "0x" + user_op["signature"].hex(),
+        }
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
@@ -279,10 +371,8 @@ class Web3Agent:
                     "jsonrpc": "2.0",
                     "method": "eth_sendUserOperation",
                     "params": [
-                        user_op,
-                        # ERC-4337 v0.6 canonical EntryPoint address (same on all EVM chains).
-                        # See: https://eips.ethereum.org/EIPS/eip-4337#entrypoint-definition
-                        "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
+                        user_op_hex,
+                        _ENTRYPOINT_ADDRESS,
                     ],
                     "id": 1,
                 },
@@ -295,6 +385,27 @@ class Web3Agent:
 
         return result["result"]
 
+    async def _send_direct_transaction(self, target: str, call_data: str) -> str:
+        """Send a direct EOA transaction (used in local dev mode)."""
+        nonce = await self._w3.eth.get_transaction_count(self._account.address)
+        gas_price = await self._w3.eth.gas_price
+
+        tx = {
+            "from": self._account.address,
+            "to": target,
+            "data": call_data,
+            "nonce": nonce,
+            "gas": 500_000,
+            "maxFeePerGas": gas_price,
+            "maxPriorityFeePerGas": 1_000_000_000,
+            "chainId": await self._w3.eth.chain_id,
+            "value": 0,
+        }
+
+        signed = self._account.sign_transaction(tx)
+        tx_hash = await self._w3.eth.send_raw_transaction(signed.rawTransaction)
+        return tx_hash.hex()
+
     async def _wait_for_receipt(self, tx_hash: str) -> TxReceipt:
         """Poll for a transaction receipt (30-second timeout)."""
         return await self._w3.eth.wait_for_transaction_receipt(
@@ -303,11 +414,15 @@ class Web3Agent:
 
     @staticmethod
     def _parse_token_id_from_receipt(receipt: TxReceipt) -> int:
-        """Extract the newly minted token ID from Transfer event logs."""
-        # The ERC-721 Transfer event: Transfer(address, address, uint256)
+        """Extract the newly minted token ID from CharacterMinted event logs."""
+        # CharacterMinted(address indexed to, uint256 indexed tokenId, ...)
+        # has 3 topics: event signature, to, tokenId.
         for log in receipt.get("logs", []):
-            if len(log.get("topics", [])) == 4:
-                return int(log["topics"][3].hex(), 16)
+            topics = log.get("topics", [])
+            if len(topics) >= 3:
+                # topic[0] is the event signature hash.
+                # topic[1] is indexed to, topic[2] is indexed tokenId.
+                return int(topics[2].hex(), 16)
         return 0
 
     @staticmethod
