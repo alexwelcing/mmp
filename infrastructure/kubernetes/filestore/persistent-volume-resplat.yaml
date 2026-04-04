@@ -1,0 +1,44 @@
+# PersistentVolume + PVC for the ReSplat worker namespace.
+# ReSplat requires a shared Filestore mount for pretrained weights and
+# generated .ply outputs.
+#
+# Replace FILESTORE_IP and SHARE_NAME with values from Terraform outputs:
+#   terraform output filestore_ip_address
+#   terraform output filestore_share_name
+#
+# If you want ReSplat to share the same Filestore instance as ComfyUI,
+# you can create a second share on the instance or mount a sub-directory.
+# For this tutorial we assume a single NFS export with sub-directories.
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: resplat-models-pv
+  labels:
+    app: resplat
+    type: filestore-nfs
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: FILESTORE_IP    # Replace with Terraform output
+    path: /comfyui_models   # Must match Filestore share name (or sub-dir)
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: resplat-models-pvc
+  namespace: resplat
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 1Ti
+  volumeName: resplat-models-pv

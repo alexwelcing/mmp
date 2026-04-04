@@ -1,0 +1,23 @@
+# Root kustomization for the MMP Kubernetes manifests.
+# Apply everything in dependency order:
+#   kubectl apply -k infrastructure/kubernetes/
+#
+# Before applying:
+#   1. Replace placeholder values in filestore/ PVs with Terraform outputs.
+#   2. Update the ai-director ServiceAccount annotation with the GSA email.
+#   3. Update image tags in deployment manifests to match your Artifact Registry.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespaces.yaml
+  - filestore/persistent-volume.yaml
+  - filestore/persistent-volume-ai-director.yaml
+  - filestore/persistent-volume-resplat.yaml
+  - comfyui/configmap.yaml
+  - comfyui/pod-snapshot.yaml
+  - ai-director/
+  - resplat-worker/
+  # KEDA must be installed separately via kubectl apply -k keda/
+  # because it creates CRDs that should not be mixed with app resources.

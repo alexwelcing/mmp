@@ -27,6 +27,8 @@ Players claim a free AI-generated character (no wallet required), then optionall
 ┌─────────────────────────────────────────────────────────────────┐
 │                        FRONTEND (React/Vite)                    │
 │  FreeRollStep → CharacterCard → PaidRollStep → WalletProvider   │
+│                         ↑                                       │
+│              GaussianSplatViewer (WebGL .ply)                   │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ REST API
 ┌──────────────────────────▼──────────────────────────────────────┐
@@ -34,10 +36,12 @@ Players claim a free AI-generated character (no wallet required), then optionall
 │                                                                 │
 │  OrchestratorAgent                                              │
 │  ├── ImageAgent  ──────────► ComfyUI Worker (GKE + GPU)         │
-│  │   (2D draft → upscale → 3DGS)      ▲                        │
-│  ├── EvaluatorAgent                   │ KEDA ScaledJob          │
-│  ├── AudioAgent  ──────────► Moshi/VibeVoice                   │
-│  └── Web3Agent   ──────────► Base L2 (ERC-4337)                │
+│  │   (2D draft → upscale)        ▲                              │
+│  ├── EvaluatorAgent              │ Webhook (AIDirectorWebhook)  │
+│  ├── AudioAgent  ──────────► Audio Worker (AudioGen)            │
+│  ├── ResplatAgent ─────────► ReSplat Worker (GPU)               │
+│  │   (Stable Zero123 → COLMAP → 3DGS)                           │
+│  └── Web3Agent   ──────────► Base L2 (ERC-4337)                 │
 │                                       │                        │
 └──────────────────────────┬────────────┼────────────────────────┘
                            │            │
@@ -66,48 +70,49 @@ Players claim a free AI-generated character (no wallet required), then optionall
 |------|---------|---------|
 | Python | 3.11+ | AI Director service |
 | Node.js | 18+ | Contracts & frontend |
-| Terraform | 1.6+ | GCP infrastructure |
+| Pulumi | 3.120+ | GCP infrastructure (Python) |
 | kubectl | 1.28+ | Kubernetes management |
 | Docker | 24+ | Container builds |
+| Make | — | One-command local dev |
 | GCP Account | — | Cloud infrastructure |
 
 ---
 
 ## 🚀 Quick Start (Local Dev)
 
-### 1. Clone & Configure
+The fastest way to run locally is **hybrid mode**: ComfyUI, AudioGen, and optional ReSplat run in Docker; the AI Director and Frontend run natively for fast hot-reload.
 
 ```bash
-git clone https://github.com/your-org/mmp.git
-cd mmp
-cp .env.example .env  # Fill in your GCP project, RPC URLs, etc.
-```
+# 1. Install dependencies once
+make install
 
-### 2. Start the AI Director
+# 2. Start ComfyUI + AudioGen containers
+make dev-native
 
-```bash
+# 3. Deploy local contracts (creates .env.contracts)
+make contracts-local
+export $(cat .env.contracts | xargs)
+
+# 4. Start the AI Director (in a second terminal)
 cd services/ai-director
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+source .venv/bin/activate
 uvicorn main:app --reload --port 8080
-```
 
-### 3. Start the Frontend
-
-```bash
+# 5. Start the frontend (in a third terminal)
 cd frontend
-npm install
 npm run dev
 # Open http://localhost:5173
 ```
 
-### 4. Run Contract Tests
+### Optional: ReSplat 3D Mode
+
+If you have an NVIDIA GPU with CUDA 12.8 support, start the full stack including ReSplat:
 
 ```bash
-cd contracts
-npm install
-npx hardhat test
+make dev-resplat
 ```
+
+Then set `USE_RESPLAT_FOR_3D=true` in your `.env` to route 3D generation through ReSplat instead of ComfyUI.
 
 ---
 
@@ -119,26 +124,33 @@ The core orchestration service. Subscribes to GCP Pub/Sub, routes requests throu
 ```
 agents/
 ├── orchestrator.py    # Main pipeline coordinator
-├── image_agent.py     # 2D → Upscale → 3DGS generation
+├── image_agent.py     # 2D draft + upscale (ComfyUI)
 ├── evaluator_agent.py # Aesthetic scoring & selection
-├── audio_agent.py     # Soundscape generation
-└── web3_agent.py      # ERC-4337 gasless minting
+├── audio_agent.py     # Soundscape generation (AudioGen)
+├── resplat_agent.py   # 3D Gaussian Splatting (ReSplat)
+└── web3_agent.py      # ERC-4337 gasless minting + splits
 ```
 
 ### `services/comfyui-worker/`
-Containerized ComfyUI with custom workflows for game asset generation:
+Containerized ComfyUI with custom workflows and the `AIDirectorWebhook` custom node for push notifications:
 - `lightning_2d_draft.json` — Fast SDXL-Lightning draft generation
-- `3dgs_generation.json` — 3D Gaussian Splatting from 2D images
+- `mesh_generation.json` — 3D mesh generation fallback
 
-### `infrastructure/terraform/`
-GCP infrastructure as code:
-- **GKE**: GPU node pool with gVisor sandboxing for CUDA checkpoints
-- **Filestore**: NFS-backed shared model cache (ReadWriteMany)
-- **Pub/Sub**: Request queue with dead-letter topic
+### `services/audio-worker/`
+Facebook AudioGen inference service via Hugging Face Hub. Generates character soundscapes on CPU.
+
+### `services/resplat-worker/`
+Full 3D Gaussian Splatting pipeline: Stable Zero123 multi-view synthesis → COLMAP sparse reconstruction → ReSplat inference → `.ply` output.
+
+### `infrastructure/pulumi/`
+GCP infrastructure as code using Python Component Resources:
+- **MMPCluster**: VPC, GKE, system/GPU node pools, Workload Identity
+- **FilestoreCache**: NFS-backed shared model cache (ReadWriteMany)
+- **PubSubPipeline**: Request queue with dead-letter topic
+- **ComfyUIWorkerPool**, **AIDirectorService**, **ResplatWorker**, **AudioWorker**: Kubernetes deployments via `pulumi_kubernetes`
 
 ### `infrastructure/kubernetes/`
-- **KEDA ScaledJob**: Scale ComfyUI workers from 0→15 based on queue depth
-- **Pod Snapshots**: gVisor + CUDA checkpoint for fast cold starts
+Reference Kubernetes manifests (deprecated in favour of Pulumi, but useful for debugging).
 
 ### `contracts/src/`
 Base L2 (Ethereum) contracts:
@@ -150,6 +162,7 @@ Base L2 (Ethereum) contracts:
 React + TypeScript progressive onboarding UI:
 - No crypto jargon for new users
 - Social login → character reveal → optional Web3 upgrade
+- Integrated `@mkkellogg/gaussian-splats-3d` WebGL viewer for `.ply` files
 
 ---
 
@@ -158,35 +171,38 @@ React + TypeScript progressive onboarding UI:
 ### 1. Provision Infrastructure
 
 ```bash
-cd infrastructure/terraform
-terraform init
-terraform plan -var="project_id=YOUR_PROJECT" -var="region=us-central1"
-terraform apply
+cd infrastructure/pulumi
+pulumi stack init staging
+pulumi config set project_id YOUR_PROJECT
+pulumi config set region us-central1
+pulumi up
 ```
 
 ### 2. Build & Push Docker Images
 
 ```bash
+export REGION=us-central1
+export PROJECT_ID=YOUR_PROJECT
+export REGISTRY=${REGION}-docker.pkg.dev/${PROJECT_ID}/mmp-images
+
 # AI Director
-docker build -t gcr.io/YOUR_PROJECT/ai-director:latest services/ai-director/
-docker push gcr.io/YOUR_PROJECT/ai-director:latest
+docker build -t ${REGISTRY}/ai-director:latest services/ai-director/
+docker push ${REGISTRY}/ai-director:latest
 
 # ComfyUI Worker
-docker build -t gcr.io/YOUR_PROJECT/comfyui-worker:latest services/comfyui-worker/
-docker push gcr.io/YOUR_PROJECT/comfyui-worker:latest
+docker build -t ${REGISTRY}/comfyui-worker:latest services/comfyui-worker/
+docker push ${REGISTRY}/comfyui-worker:latest
+
+# Audio Worker
+docker build -t ${REGISTRY}/audio-worker:latest services/audio-worker/
+docker push ${REGISTRY}/audio-worker:latest
+
+# ReSplat Worker (optional)
+docker build -t ${REGISTRY}/resplat-worker:latest services/resplat-worker/
+docker push ${REGISTRY}/resplat-worker:latest
 ```
 
-### 3. Deploy to Kubernetes
-
-```bash
-cd infrastructure/kubernetes
-kubectl apply -f namespaces.yaml
-kubectl apply -f filestore/persistent-volume.yaml
-kubectl apply -f keda/keda-operator.yaml
-kubectl apply -f keda/comfyui-scaled-job.yaml
-```
-
-### 4. Deploy Contracts
+### 3. Deploy Contracts
 
 ```bash
 cd contracts
@@ -201,11 +217,17 @@ npx hardhat run scripts/deploy.ts --network base-sepolia
 |----------|-------------|
 | `GCP_PROJECT_ID` | Your GCP project ID |
 | `PUBSUB_TOPIC` | Pub/Sub topic for generation requests |
+| `PUBSUB_SUBSCRIPTION` | Pull subscription consumed by the AI Director |
 | `COMFYUI_ENDPOINT` | ComfyUI service URL |
+| `AUDIO_ENDPOINT` | Audio worker URL |
+| `USE_RESPLAT_FOR_3D` | Route 3D generation through ReSplat (`true` / `false`) |
+| `RESPLAT_ENDPOINT` | ReSplat worker URL |
 | `BASE_RPC_URL` | Base L2 RPC endpoint |
+| `BUNDLER_URL` | ERC-4337 bundler endpoint |
 | `CHARACTER_NFT_ADDRESS` | Deployed CharacterNFT contract |
 | `PAYMASTER_ADDRESS` | Deployed AIDirectorPaymaster contract |
 | `SPLITS_ADDRESS` | Deployed CharacterSplits contract |
+| `AI_DIRECTOR_PRIVATE_KEY` | Operational wallet private key (required in prod) |
 
 ---
 

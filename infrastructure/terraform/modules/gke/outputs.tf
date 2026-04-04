@@ -19,3 +19,8 @@ output "node_service_account_email" {
   description = "Email of the GKE node service account."
   value       = google_service_account.gke_nodes.email
 }
+
+output "ai_director_service_account_email" {
+  description = "Email of the AI Director Google Service Account (for Workload Identity)."
+  value       = google_service_account.ai_director.email
+}

@@ -1,0 +1,19 @@
+# ClusterIP service for the ReSplat Worker.
+# The AI Director calls this internally on port 9001.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: resplat-worker
+  namespace: resplat
+  labels:
+    app: resplat-worker
+spec:
+  type: ClusterIP
+  selector:
+    app: resplat-worker
+  ports:
+    - name: http
+      port: 9001
+      targetPort: 9001
+      protocol: TCP

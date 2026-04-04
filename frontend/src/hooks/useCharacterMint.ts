@@ -36,7 +36,10 @@ export interface UseCharacterMintReturn {
     tier: MintTier,
     preferences: Partial<CharacterTraits>
   ) => Promise<void>;
+  mintOnChain: (jobId: string, walletAddress: string, tier?: MintTier) => Promise<void>;
   reset: () => void;
+  /** The tier used to generate the current character (defaults to 'free'). */
+  tier: MintTier;
 }
 
 // ── Hook ────────────────────────────────────────────────────────────────
@@ -46,6 +49,7 @@ export function useCharacterMint(): UseCharacterMintReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [stage, setStage] = useState<GenerationStatus["stage"] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tier, setTier] = useState<MintTier>("free");
 
   // Ref to allow cancelling the poll loop on unmount or reset.
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -171,6 +175,7 @@ export function useCharacterMint(): UseCharacterMintReturn {
   /** Claim the free character (no wallet, no payment). */
   const mintFree = useCallback(
     async (userId: string): Promise<void> => {
+      setTier("free");
       await triggerGeneration({ userId, preferences: {} });
     },
     [triggerGeneration]
@@ -180,21 +185,50 @@ export function useCharacterMint(): UseCharacterMintReturn {
   const mintPaid = useCallback(
     async (
       userId: string,
-      _tier: MintTier,
+      paidTier: MintTier,
       preferences: Partial<CharacterTraits>
     ): Promise<void> => {
+      setTier(paidTier);
       await triggerGeneration({
         userId,
         preferences: {
           role: preferences.role,
           aesthetic: preferences.aesthetic,
         },
+        mintOnChain: paidTier !== "free",
       });
     },
     [triggerGeneration]
   );
 
-  return { character, isLoading, stage, error, mintFree, mintPaid, reset };
+  /** Mint an already-generated character on-chain. */
+  const mintOnChain = useCallback(
+    async (jobId: string, walletAddress: string, tier: MintTier = "free"): Promise<void> => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const resp = await fetch(`${AI_DIRECTOR_URL}/mint/${jobId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ wallet_address: walletAddress, tier }),
+        });
+        if (!resp.ok) {
+          const errBody = await resp.text();
+          throw new Error(`Mint failed: ${errBody}`);
+        }
+        const status = (await resp.json()) as GenerationStatus;
+        setCharacter(buildCharacter(status, jobId));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        setError(message);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    []
+  );
+
+  return { character, isLoading, stage, error, mintFree, mintPaid, mintOnChain, reset, tier };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -204,14 +238,7 @@ function buildCharacter(status: GenerationStatus, jobId: string): Character {
   return {
     id: jobId,
     name: generateCharacterName(jobId),
-    // Traits are placeholder values until NFT metadata is fetched from the
-    // token URI after minting.  In production, call the CharacterNFT.getTraits()
-    // view function with the tokenId to populate these with on-chain values.
-    traits: {
-      role: "Warrior",
-      aesthetic: "Fantasy",
-      rarity: "Common",
-    },
+    traits: status.traits,
     imageUrl: status.upscaledUrl || status.selectedDraftUrl,
     threedgsUrl: status.threedgsUrl,
     audioUrl: status.audioUrl,

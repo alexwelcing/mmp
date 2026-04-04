@@ -1,0 +1,6 @@
+config:
+  mmp:environment: staging
+  mmp:region: us-central1
+  mmp:zone: us-central1-a
+  mmp:filestore_tier: BASIC_HDD
+  mmp:api_domain: api.staging.example.com

@@ -46,6 +46,9 @@ done
 # Copy our custom workflows into the ComfyUI workflows directory.
 COPY workflows/ /app/ComfyUI/workflows/custom/
 
+# Copy the AI Director webhook custom node.
+COPY custom_nodes/ai_director_webhook /app/ComfyUI/custom_nodes/ai_director_webhook
+
 # The Filestore NFS mount will provide pre-downloaded models at runtime.
 # This avoids downloading multi-GB model files on every container start.
 # Mount point: /mnt/filestore/models → /app/ComfyUI/models (symlink)

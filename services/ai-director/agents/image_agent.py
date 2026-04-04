@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import uuid
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -28,13 +29,18 @@ logger = logging.getLogger(__name__)
 # mounted into the ComfyUI worker container at /workflows/.  When running
 # the AI Director locally (outside Docker), we fall back to the sibling
 # directory relative to the repository root.
-_WORKFLOW_DIR = Path(__file__).resolve().parents[3] / "services" / "comfyui-worker" / "workflows"
+_WORKFLOW_DIR = (
+    Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", ""))
+    if os.environ.get("COMFYUI_WORKFLOWS_DIR")
+    else Path(__file__).resolve().parents[3] / "services" / "comfyui-worker" / "workflows"
+)
 _LIGHTNING_2D_WORKFLOW = _WORKFLOW_DIR / "lightning_2d_draft.json"
-_3DGS_WORKFLOW = _WORKFLOW_DIR / "3dgs_generation.json"
+_MESH_WORKFLOW = _WORKFLOW_DIR / "mesh_generation.json"
 
 
+@lru_cache(maxsize=8)
 def _load_workflow(path: Path) -> dict[str, Any]:
-    """Load a ComfyUI workflow JSON file."""
+    """Load a ComfyUI workflow JSON file (cached in memory)."""
     with open(path) as fh:
         return json.load(fh)
 
@@ -43,12 +49,21 @@ class ImageAgent:
     """
     Generates 2D character drafts, upscales them, and produces
     3D Gaussian Splatting (3DGS) assets via ComfyUI.
+
+    Supports webhook-driven completion via the AIDirectorWebhook custom node.
     """
+
+    # Shared class-level state for webhook notifications across all instances.
+    _webhook_events: dict[str, asyncio.Event] = {}
+    _client_to_prompt: dict[str, str] = {}
 
     def __init__(self, settings: Settings) -> None:
         self._endpoint = str(settings.comfyui_endpoint).rstrip("/")
         self._timeout = settings.comfyui_timeout_seconds
         self._output_base = settings.output_base_path
+        # Reuse a single httpx client for connection pooling across all
+        # ComfyUI requests (prompt submission + polling).
+        self._client = httpx.AsyncClient(timeout=self._timeout)
 
     # ------------------------------------------------------------------ #
     # Public methods                                                       #
@@ -58,6 +73,7 @@ class ImageAgent:
         self,
         preferences: dict[str, Any],
         count: int = 4,
+        job_id: str = "",
     ) -> list[str]:
         """
         Generate `count` 2D character drafts using the SDXL-Lightning workflow.
@@ -69,6 +85,8 @@ class ImageAgent:
             self._run_comfyui_workflow(
                 workflow_path=_LIGHTNING_2D_WORKFLOW,
                 parameters=self._build_2d_params(preferences, seed=i * 1000),
+                job_id=job_id,
+                node_type="image",
             )
             for i in range(count)
         ]
@@ -76,7 +94,9 @@ class ImageAgent:
         logger.info("Generated %d 2D drafts", len(results))
         return list(results)
 
-    async def upscale_draft(self, draft_url: str) -> str:
+    async def upscale_draft(
+        self, draft_url: str, job_id: str = ""
+    ) -> str:
         """
         Upscale a selected draft using the ComfyUI clarity upscaler node.
 
@@ -87,11 +107,15 @@ class ImageAgent:
         upscaled = await self._run_comfyui_workflow(
             workflow_path=_LIGHTNING_2D_WORKFLOW,  # reuses same template w/ upscale node
             parameters={**params, "mode": "upscale"},
+            job_id=job_id,
+            node_type="image",
         )
         logger.info("Upscaled draft: %s → %s", draft_url, upscaled)
         return upscaled
 
-    async def generate_3dgs(self, upscaled_url: str) -> str:
+    async def generate_3dgs(
+        self, upscaled_url: str, job_id: str = ""
+    ) -> str:
         """
         Convert a 2D upscaled image to a 3D Gaussian Splatting scene.
 
@@ -100,14 +124,29 @@ class ImageAgent:
         """
         params = {"input_image": upscaled_url}
         threedgs_path = await self._run_comfyui_workflow(
-            workflow_path=_3DGS_WORKFLOW,
+            workflow_path=_MESH_WORKFLOW,
             parameters=params,
+            job_id=job_id,
+            node_type="3dgs",
         )
         logger.info("3DGS generation complete: %s", threedgs_path)
         return threedgs_path
 
+    @classmethod
+    def handle_webhook(cls, client_id: str) -> None:
+        """
+        Signal that a ComfyUI prompt has completed.
+
+        Called by the FastAPI webhook endpoint when the AIDirectorWebhook
+        node POSTs its notification.
+        """
+        event = cls._webhook_events.get(client_id)
+        if event and not event.is_set():
+            event.set()
+            logger.debug("Webhook received for client_id=%s", client_id)
+
     # ------------------------------------------------------------------ #
-    # Private helpers                                                      #
+    # Private helpers                                                    #
     # ------------------------------------------------------------------ #
 
     @staticmethod
@@ -131,7 +170,7 @@ class ImageAgent:
             "prompt": custom_prompt or base_prompt,
             "negative_prompt": negative_prompt,
             "seed": seed + hash(str(preferences)) % 100_000,
-            "steps": 6,       # SDXL-Lightning uses very few steps
+            "steps": 6,  # SDXL-Lightning uses very few steps
             "cfg_scale": 1.5,
             "width": 1024,
             "height": 1024,
@@ -141,65 +180,107 @@ class ImageAgent:
         self,
         workflow_path: Path,
         parameters: dict[str, Any],
+        job_id: str = "",
+        node_type: str = "image",
     ) -> str:
         """
         Submit a parameterised workflow to ComfyUI and wait for completion.
 
-        ComfyUI's /prompt endpoint accepts a graph; we patch selected nodes
-        with our runtime parameters then poll /history until done.
-
-        In a real deployment the ComfyUI webhook (POST /webhook/comfyui)
-        replaces the polling loop for lower latency.
+        If ``job_id`` is provided we inject the AIDirectorWebhook custom node
+        so ComfyUI can notify us when the prompt finishes, allowing us to
+        exit the polling loop early.
         """
         workflow = _load_workflow(workflow_path)
         workflow = self._patch_workflow(workflow, parameters)
 
         client_id = str(uuid.uuid4())
+        if job_id:
+            workflow = self._inject_webhook_node(
+                workflow, client_id=client_id, job_id=job_id, node_type=node_type
+            )
+            event = asyncio.Event()
+            ImageAgent._webhook_events[client_id] = event
+
         prompt_payload = {"prompt": workflow, "client_id": client_id}
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            # Submit the prompt.
-            resp = await client.post(
+        try:
+            resp = await self._client.post(
                 f"{self._endpoint}/prompt",
                 json=prompt_payload,
             )
             resp.raise_for_status()
             prompt_id: str = resp.json()["prompt_id"]
 
-            # Poll /history until the job is done.
-            output_path = await self._poll_for_completion(client, prompt_id)
+            if job_id:
+                ImageAgent._client_to_prompt[client_id] = prompt_id
+
+            # Poll /history until the job is done (or webhook signals us).
+            output_path = await self._poll_for_completion(
+                prompt_id, client_id=client_id if job_id else None
+            )
+        finally:
+            # Clean up webhook state so the class-level registries don't grow
+            # unbounded in long-running processes.
+            if job_id:
+                ImageAgent._webhook_events.pop(client_id, None)
+                ImageAgent._client_to_prompt.pop(client_id, None)
 
         return output_path
 
     async def _poll_for_completion(
-        self, client: httpx.AsyncClient, prompt_id: str
+        self,
+        prompt_id: str,
+        client_id: str | None = None,
     ) -> str:
         """Poll ComfyUI /history endpoint until a prompt completes."""
+        event = ImageAgent._webhook_events.get(client_id) if client_id else None
+
         for attempt in range(self._timeout // 2):
-            await asyncio.sleep(2)
-            resp = await client.get(f"{self._endpoint}/history/{prompt_id}")
+            if event and event.is_set():
+                logger.debug("Prompt %s completed via webhook", prompt_id)
+            else:
+                # Exponential backoff capped at 8 s to reduce load.
+                delay = min(2 * (2 ** attempt), 8)
+                await asyncio.sleep(delay)
+
+            resp = await self._client.get(f"{self._endpoint}/history/{prompt_id}")
             resp.raise_for_status()
             history = resp.json()
 
             if prompt_id not in history:
+                if event and event.is_set():
+                    # Webhook fired but history not yet visible — give it one more tick.
+                    await asyncio.sleep(0.5)
+                    continue
                 continue  # not finished yet
 
             outputs = history[prompt_id].get("outputs", {})
             for node_id, node_output in outputs.items():
-                images = node_output.get("images", [])
-                if images:
-                    img = images[0]
-                    filename: str = img["filename"]
-                    subfolder: str = img.get("subfolder", "")
-                    url = (
-                        f"{self._endpoint}/view"
-                        f"?filename={filename}&subfolder={subfolder}"
-                    )
-                    return url
+                if not isinstance(node_output, dict):
+                    continue
+                # ComfyUI nodes may emit files under keys like "images",
+                # "gltf", "obj", "ply", etc.  We look for any list of dicts
+                # that contain a "filename" key.
+                for key, value in node_output.items():
+                    if isinstance(value, list) and value:
+                        first = value[0]
+                        if isinstance(first, dict) and "filename" in first:
+                            filename: str = first["filename"]
+                            subfolder: str = first.get("subfolder", "")
+                            file_type: str = first.get("type", "output")
+                            url = (
+                                f"{self._endpoint}/view"
+                                f"?filename={filename}&subfolder={subfolder}&type={file_type}"
+                            )
+                            return url
 
-            raise RuntimeError(f"ComfyUI prompt {prompt_id} finished with no image output")
+            raise RuntimeError(
+                f"ComfyUI prompt {prompt_id} finished with no output files"
+            )
 
-        raise TimeoutError(f"ComfyUI prompt {prompt_id} did not complete within {self._timeout}s")
+        raise TimeoutError(
+            f"ComfyUI prompt {prompt_id} did not complete within {self._timeout}s"
+        )
 
     @staticmethod
     def _patch_workflow(
@@ -220,4 +301,44 @@ class ImageAgent:
             for key, value in parameters.items():
                 if key in inputs:
                     inputs[key] = value
+        return workflow
+
+    @staticmethod
+    def _inject_webhook_node(
+        workflow: dict[str, Any],
+        client_id: str,
+        job_id: str,
+        node_type: str,
+    ) -> dict[str, Any]:
+        """
+        Append the AIDirectorWebhook custom node to the workflow graph.
+
+        The node is wired to the final SaveImage / Save3DModel node so it
+        executes after the generation is complete.
+        """
+        output_node_id: str | None = None
+        for node_id, node in workflow.items():
+            if not isinstance(node, dict):
+                continue
+            class_type = node.get("class_type", "")
+            if class_type in ("SaveImage", "Save3DModel"):
+                output_node_id = node_id
+                break
+
+        if output_node_id is None:
+            logger.warning(
+                "No SaveImage/Save3DModel node found; skipping webhook injection"
+            )
+            return workflow
+
+        webhook_id = "9999"
+        workflow[webhook_id] = {
+            "inputs": {
+                "images": [output_node_id, 0],
+                "client_id": client_id,
+                "job_id": job_id,
+                "node_type": node_type,
+            },
+            "class_type": "AIDirectorWebhook",
+        }
         return workflow

@@ -1,0 +1,6 @@
+name: mmp
+runtime:
+  name: python
+  options:
+    virtualenv: venv
+description: MMP infrastructure — GCP-native AI + Web3 pipeline

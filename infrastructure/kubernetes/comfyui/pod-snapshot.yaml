@@ -70,7 +70,8 @@ spec:
 
   containers:
     - name: comfyui
-      image: us-central1-docker.pkg.dev/YOUR_PROJECT/mmp-images/comfyui-worker:latest
+      # Replace YOUR_REGISTRY with your Artifact Registry location.
+      image: YOUR_REGISTRY/mmp-images/comfyui-worker:latest
       command: ["/scripts/restore.sh"]
 
       resources:

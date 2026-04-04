@@ -27,7 +27,10 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     # GCP                                                                  #
     # ------------------------------------------------------------------ #
-    gcp_project_id: str = Field(..., description="GCP project ID")
+    gcp_project_id: str = Field(
+        "local-dev",
+        description="GCP project ID (set to 'local-dev' for local development)",
+    )
     gcp_region: str = Field("us-central1", description="GCP region")
 
     # ------------------------------------------------------------------ #
@@ -75,6 +78,22 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------ #
+    # ReSplat (experimental 3DGS worker)                                   #
+    # ------------------------------------------------------------------ #
+    use_resplat_for_3d: bool = Field(
+        False,
+        description="Route 3D generation through the ReSplat worker instead of ComfyUI",
+    )
+    resplat_endpoint: HttpUrl = Field(
+        "http://resplat-worker.ai-director.svc.cluster.local:9001",
+        description="Internal K8s service URL for the ReSplat inference service",
+    )
+    resplat_timeout_seconds: int = Field(
+        600,
+        description="Max seconds to wait for ReSplat inference",
+    )
+
+    # ------------------------------------------------------------------ #
     # Audio                                                                #
     # ------------------------------------------------------------------ #
     audio_model: Literal["moshi", "vibevoice"] = Field(
@@ -114,8 +133,8 @@ class Settings(BaseSettings):
     # ideally sourced from GCP Secret Manager via Secret Manager sidecar or
     # Workload Identity + Secret Manager API.  Never hardcode in source.
     ai_director_private_key: str = Field(
-        ...,
-        description="Private key for the AI Director operational wallet (required)",
+        "0x" + "00" * 32,
+        description="Private key for the AI Director operational wallet (required in prod)",
     )
 
     # ------------------------------------------------------------------ #

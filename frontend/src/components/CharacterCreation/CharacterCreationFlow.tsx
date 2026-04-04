@@ -9,11 +9,13 @@
  * has already received their character and is ready to commit.
  */
 
-import React, { useState, useCallback } from "react";
+import type { CSSProperties } from "react";
+import { useState, useCallback } from "react";
 import { FreeRollStep } from "./FreeRollStep";
 import { PaidRollStep } from "./PaidRollStep";
 import { CharacterCard } from "./CharacterCard";
 import { useCharacterMint } from "../../hooks/useCharacterMint";
+import { useWalletContext } from "../WalletProvider/WalletProvider";
 import type { Character, OnboardingStep, MintTier, CharacterTraits } from "../../types/character";
 
 // ── Inline styles (replace with CSS modules / Tailwind in production) ──
@@ -28,7 +30,7 @@ const styles = {
     padding: "2rem",
     fontFamily: "'Segoe UI', system-ui, sans-serif",
     color: "#fff",
-  } as React.CSSProperties,
+  } as CSSProperties,
 
   card: {
     background: "rgba(255,255,255,0.07)",
@@ -39,7 +41,7 @@ const styles = {
     width: "100%",
     boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
     border: "1px solid rgba(255,255,255,0.1)",
-  } as React.CSSProperties,
+  } as CSSProperties,
 };
 
 export function CharacterCreationFlow() {
@@ -48,8 +50,9 @@ export function CharacterCreationFlow() {
   // modern browsers.  We use it here for the anonymous session user ID.
   const [userId] = useState(() => `user_${crypto.randomUUID()}`);
 
-  const { character, isLoading, stage, error, mintFree, mintPaid } =
+  const { character, isLoading, stage, error, mintFree, mintPaid, mintOnChain, tier } =
     useCharacterMint();
+  const wallet = useWalletContext();
 
   // ── Handlers ────────────────────────────────────────────────────────
 
@@ -80,6 +83,18 @@ export function CharacterCreationFlow() {
     [mintPaid, userId]
   );
 
+  const handleMintOnChain = useCallback(async () => {
+    if (!character) return;
+    if (!wallet.isConnected) {
+      await wallet.connect();
+    }
+    if (!wallet.address) {
+      return;
+    }
+    await wallet.switchToBase();
+    await mintOnChain(character.id, wallet.address, tier);
+  }, [character, wallet, mintOnChain]);
+
   // ── Render ───────────────────────────────────────────────────────────
 
   return (
@@ -109,7 +124,7 @@ export function CharacterCreationFlow() {
         )}
 
         {step === "complete" && character && (
-          <CharacterCard character={character} />
+          <CharacterCard character={character} onMint={handleMintOnChain} isLoading={isLoading} />
         )}
 
         {error && (
@@ -290,7 +305,7 @@ function LoadingSpinner() {
   );
 }
 
-const primaryButtonStyle: React.CSSProperties = {
+const primaryButtonStyle: CSSProperties = {
   background: "linear-gradient(135deg, #7c3aed, #a78bfa)",
   color: "#fff",
   border: "none",

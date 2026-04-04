@@ -24,6 +24,38 @@ resource "google_project_iam_member" "gke_nodes_pubsub" {
   member  = "serviceAccount:${google_service_account.gke_nodes.email}"
 }
 
+# Service account for the AI Director (Workload Identity).
+resource "google_service_account" "ai_director" {
+  account_id   = "${var.cluster_name}-ai-director"
+  display_name = "AI Director Service Account for ${var.cluster_name}"
+}
+
+resource "google_project_iam_member" "ai_director_pubsub" {
+  project = var.project_id
+  role    = "roles/pubsub.subscriber"
+  member  = "serviceAccount:${google_service_account.ai_director.email}"
+}
+
+resource "google_project_iam_member" "ai_director_pubsub_publisher" {
+  project = var.project_id
+  role    = "roles/pubsub.publisher"
+  member  = "serviceAccount:${google_service_account.ai_director.email}"
+}
+
+resource "google_project_iam_member" "ai_director_metric_writer" {
+  project = var.project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.ai_director.email}"
+}
+
+# Workload Identity binding: allow the K8s ServiceAccount in the ai-director
+# namespace to impersonate the Google Service Account above.
+resource "google_service_account_iam_member" "ai_director_workload_identity" {
+  service_account_id = google_service_account.ai_director.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[ai-director/ai-director]"
+}
+
 # VPC network for the cluster.
 resource "google_compute_network" "gke_network" {
   name                    = "${var.cluster_name}-network"

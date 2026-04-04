@@ -1,0 +1,3 @@
+# Core ComfyUI dependencies are installed via ComfyUI's own requirements.
+# This file captures additional deps needed by MMP custom nodes.
+requests>=2.31.0

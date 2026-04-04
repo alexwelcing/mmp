@@ -1,0 +1,41 @@
+# PersistentVolume + PVC for the AI Director namespace.
+# Both the ComfyUI workers and the AI Director need access to the shared
+# Filestore NFS volume for outputs.  ReadWriteMany allows multiple pods
+# across namespaces to mount the same NFS export concurrently.
+#
+# Replace FILESTORE_IP and SHARE_NAME with values from Terraform outputs:
+#   terraform output filestore_ip_address
+#   terraform output filestore_share_name
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: comfyui-models-pv-ai-director
+  labels:
+    app: ai-director
+    type: filestore-nfs
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: FILESTORE_IP    # Replace with Terraform output
+    path: /comfyui_models   # Must match Filestore share name
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: comfyui-models-pvc
+  namespace: ai-director
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 1Ti
+  volumeName: comfyui-models-pv-ai-director
