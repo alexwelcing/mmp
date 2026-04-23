@@ -61,6 +61,7 @@ class AIDirectorService(pulumi.ComponentResource):
                 "MAX_CONCURRENT_JOBS": "20",
                 "PUBSUB_TOPIC": f"asset-generation-requests-{ENVIRONMENT}",
                 "PUBSUB_SUBSCRIPTION": f"asset-generation-requests-sub-{ENVIRONMENT}",
+                "PUBSUB_STATUS_TOPIC": f"asset-generation-status-{ENVIRONMENT}",
                 "PUBSUB_MAX_MESSAGES": "10",
                 "FILESTORE_MOUNT_PATH": "/mnt/filestore",
                 "OUTPUT_BASE_PATH": "/mnt/filestore/outputs",

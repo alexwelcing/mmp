@@ -79,6 +79,7 @@ pulumi.export("clusterEndpoint", cluster.cluster.endpoint)
 pulumi.export("filestoreIp", filestore.ip_address)
 pulumi.export("filestoreShare", filestore.share_name)
 pulumi.export("pubsubTopic", pubsub.topic.name)
+pulumi.export("pubsubStatusTopic", pubsub.status_topic.name)
 pulumi.export("pubsubSubscription", pubsub.subscription.name)
 pulumi.export("aiDirectorSa", cluster.ai_director_sa.email)
 from config import PROJECT_ID, REGION

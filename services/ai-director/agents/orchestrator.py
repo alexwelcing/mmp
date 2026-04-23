@@ -22,12 +22,14 @@ import logging
 import random
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
 from google.cloud import pubsub_v1
 
 from config import Settings
+
 from .audio_agent import AudioAgent
 from .evaluator_agent import EvaluatorAgent
 from .image_agent import ImageAgent
@@ -95,6 +97,8 @@ class OrchestratorAgent:
         # (where GOOGLE_APPLICATION_CREDENTIALS may be missing) doesn't crash.
         self._subscriber: pubsub_v1.SubscriberClient | None = None
         self._subscription_path: str | None = None
+        self._publisher: pubsub_v1.PublisherClient | None = None
+        self._status_topic_path: str | None = None
 
     # ------------------------------------------------------------------ #
     # Public API                                                           #
@@ -124,6 +128,7 @@ class OrchestratorAgent:
         )
         self._jobs[job_id] = job
         self._trim_jobs()
+        self._publish_job_event(job, event_type="job_enqueued")
         self._spawn_task(self._run_pipeline(job))
         return job_id
 
@@ -149,6 +154,61 @@ class OrchestratorAgent:
             self._subscription_path = self._subscriber.subscription_path(
                 self._settings.gcp_project_id, self._settings.pubsub_subscription
             )
+
+    def _ensure_publisher(self) -> bool:
+        """Lazy-create the Pub/Sub publisher client for lifecycle events."""
+        if not self._settings.pubsub_status_topic:
+            return False
+
+        if self._publisher is None:
+            self._publisher = pubsub_v1.PublisherClient()
+            self._status_topic_path = self._publisher.topic_path(
+                self._settings.gcp_project_id,
+                self._settings.pubsub_status_topic,
+            )
+        return True
+
+    def _publish_job_event(self, job: GenerationJob, event_type: str) -> None:
+        """Publish a lightweight job lifecycle event when a status topic is configured."""
+        if not self._ensure_publisher():
+            return
+
+        payload = {
+            "event_type": event_type,
+            "job_id": job.job_id,
+            "user_id": job.user_id,
+            "stage": job.stage.value,
+            "draft_count": len(job.draft_urls),
+            "selected_draft_url": job.selected_draft_url,
+            "upscaled_url": job.upscaled_url,
+            "threedgs_url": job.threedgs_url,
+            "audio_url": job.audio_url,
+            "nft_token_id": job.nft_token_id,
+            "error": job.error,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+        publish_future = self._publisher.publish(
+            self._status_topic_path,
+            json.dumps(payload).encode("utf-8"),
+        )
+
+        def _log_publish_error(future) -> None:
+            try:
+                future.result()
+            except Exception:
+                logger.exception(
+                    "Failed to publish %s event for job %s",
+                    event_type,
+                    job.job_id,
+                )
+
+        publish_future.add_done_callback(_log_publish_error)
+
+    def _set_job_stage(self, job: GenerationJob, stage: JobStage) -> None:
+        """Advance the job stage and emit a lifecycle event."""
+        job.stage = stage
+        self._publish_job_event(job, event_type="stage_changed")
 
     @staticmethod
     def _spawn_task(coro) -> asyncio.Task:
@@ -192,6 +252,7 @@ class OrchestratorAgent:
                     )
                     self._jobs[job.job_id] = job
                     self._trim_jobs()
+                    self._publish_job_event(job, event_type="job_enqueued")
                     self._spawn_task(
                         self._run_pipeline_with_ack(
                             job,
@@ -236,7 +297,7 @@ class OrchestratorAgent:
         logger.info("Starting pipeline for job %s (user=%s)", job.job_id, job.user_id)
         try:
             # Stage 1: Generate multiple 2D drafts in parallel.
-            job.stage = JobStage.DRAFTING
+            self._set_job_stage(job, JobStage.DRAFTING)
             job.draft_urls = await self._image_agent.generate_2d_drafts(
                 job.preferences,
                 count=self._settings.comfyui_draft_count,
@@ -244,13 +305,13 @@ class OrchestratorAgent:
             )
 
             # Stage 2: Pick the best draft using the evaluator.
-            job.stage = JobStage.EVALUATING
+            self._set_job_stage(job, JobStage.EVALUATING)
             job.selected_draft_url = await self._evaluator.select_best_draft(
                 job.draft_urls
             )
 
             # Stage 3: Upscale the selected draft.
-            job.stage = JobStage.UPSCALING
+            self._set_job_stage(job, JobStage.UPSCALING)
             job.upscaled_url = await self._image_agent.upscale_draft(
                 job.selected_draft_url,
                 job_id=job.job_id,
@@ -261,7 +322,7 @@ class OrchestratorAgent:
             job.traits = _generate_traits(job.job_id, job.preferences)
 
             # Stage 4: Generate 3D representation (ComfyUI mesh or ReSplat).
-            job.stage = JobStage.GENERATING_3DGS
+            self._set_job_stage(job, JobStage.GENERATING_3DGS)
             if self._resplat_agent:
                 job.threedgs_url = await self._resplat_agent.generate_3dgs(
                     job.upscaled_url,
@@ -274,7 +335,7 @@ class OrchestratorAgent:
                 )
 
             # Stage 5: Generate audio soundscape.
-            job.stage = JobStage.GENERATING_AUDIO
+            self._set_job_stage(job, JobStage.GENERATING_AUDIO)
             character_role = job.preferences.get("role", "warrior")
             job.audio_url = await self._audio_agent.generate_soundscape(
                 character_role
@@ -282,7 +343,7 @@ class OrchestratorAgent:
 
             # Stage 6: Gasless on-chain mint (only if user opted in).
             if job.preferences.get("mint_on_chain", False):
-                job.stage = JobStage.MINTING
+                self._set_job_stage(job, JobStage.MINTING)
                 traits_indices: dict[str, int] | None = None
                 if job.traits:
                     traits_indices = {
@@ -298,11 +359,13 @@ class OrchestratorAgent:
                 )
 
             job.stage = JobStage.COMPLETE
+            self._publish_job_event(job, event_type="job_completed")
             logger.info("Pipeline complete for job %s; token_id=%s", job.job_id, job.nft_token_id)
 
         except Exception as exc:
             job.stage = JobStage.FAILED
             job.error = str(exc)
+            self._publish_job_event(job, event_type="job_failed")
             logger.exception("Pipeline failed for job %s", job.job_id)
             raise
 
