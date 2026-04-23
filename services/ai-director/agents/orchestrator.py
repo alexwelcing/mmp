@@ -173,6 +173,9 @@ class OrchestratorAgent:
         if not self._ensure_publisher():
             return
 
+        assert self._publisher is not None
+        assert self._status_topic_path is not None
+
         payload = {
             "event_type": event_type,
             "job_id": job.job_id,
@@ -185,7 +188,7 @@ class OrchestratorAgent:
             "audio_url": job.audio_url,
             "nft_token_id": job.nft_token_id,
             "error": job.error,
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(tz=UTC).isoformat(),
         }
 
         publish_future = self._publisher.publish(
@@ -193,7 +196,7 @@ class OrchestratorAgent:
             json.dumps(payload).encode("utf-8"),
         )
 
-        def _log_publish_error(future) -> None:
+        def _log_publish_error(future: Any) -> None:
             try:
                 future.result()
             except Exception:
