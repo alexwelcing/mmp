@@ -12,14 +12,14 @@ The two releases / session themes that stood out most were:
 2. [`What's new for AI on GKE: Training, serving, and agents`](https://www.googlecloudevents.com/next-vegas/session/3912907/what's-new-for-ai-on-gke-training-serving-and-agents)  
    This one felt validating. MMP already offloads heavy image and 3D work onto GKE GPU workers. NEXT '26 makes that design feel even more current because the conversation is no longer just “where do I run containers?” but “how do I build a reliable serving layer for AI workloads and agents?” That shift helped me reframe the project: ComfyUI and ReSplat are not just background jobs, they are an AI serving plane.
 
-I also took a cue from [`What's new in streaming: Real-time data for agentic AI`](https://www.googlecloudevents.com/next-vegas/session/3912220/what's-new-in-streaming-real-time-data-for-agentic-ai). The tutorial already uses Pub/Sub, but only as a request queue. After looking at the NEXT content, that feels too small. Agent systems want streams for status, moderation, analytics, and follow-on automation, not just one queue feeding one worker pool.
+I also took a cue from [`What's new in streaming: Real-time data for agentic AI`](https://www.googlecloudevents.com/next-vegas/session/3912220/what's-new-in-streaming-real-time-data-for-agentic-ai). The tutorial already used Pub/Sub, but only as a request queue. In this refresh I tightened that by adding a dedicated lifecycle topic so the AI Director can emit job-stage events for downstream consumers. It is still a small step, but it makes the architecture more agent-friendly right now instead of leaving the idea as a note for later.
 
 ## What I changed in the project
 
 - Updated the core docs so the repo explicitly maps to the strongest NEXT '26 themes for this architecture.
 - Repositioned the AI Director as a future MCP-friendly control plane rather than a pile of bespoke integrations.
 - Reframed the GKE GPU workers as an AI serving layer for generation, inference, and agent-triggered jobs.
-- Added a clearer upgrade path for Pub/Sub so the tutorial can grow from request processing into real-time eventing.
+- Added a real Pub/Sub lifecycle stream so the tutorial now emits job-stage events in addition to handling request intake.
 
 ## Why I think these updates matter
 

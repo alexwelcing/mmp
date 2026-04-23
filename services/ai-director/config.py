@@ -44,6 +44,13 @@ class Settings(BaseSettings):
         "asset-generation-requests-sub",
         description="Pub/Sub pull subscription consumed by this service",
     )
+    pubsub_status_topic: str = Field(
+        "",
+        description=(
+            "Optional Pub/Sub topic for job lifecycle events "
+            "(leave empty to disable event publishing)"
+        ),
+    )
     pubsub_max_messages: int = Field(
         10,
         description="Max messages to pull per batch",

@@ -16,6 +16,7 @@ data:
   # Pub/Sub
   PUBSUB_TOPIC: "asset-generation-requests-staging"
   PUBSUB_SUBSCRIPTION: "asset-generation-requests-sub-staging"
+  PUBSUB_STATUS_TOPIC: "asset-generation-status-staging"
   PUBSUB_MAX_MESSAGES: "10"
 
   # Filestore / Shared Storage

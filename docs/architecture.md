@@ -78,9 +78,9 @@ The current tutorial architecture still holds up well, but three NEXT '26 sessio
 |---|---|---|
 | [`Google MCP Services: Connect AI agents to cloud infrastructure in minutes`](https://www.googlecloudevents.com/next-vegas/session/3912288/google-mcp-services-connect-ai-agents-to-cloud-infrastructure-in-minutes) | The AI Director already behaves like a control-plane agent, but cloud integrations are still described as direct service-specific calls. | Add an MCP tool layer for cloud operations so the AI Director can inspect GKE, query analytics, and trigger future support workflows with IAM-backed access instead of custom glue code. |
 | [`What's new for AI on GKE: Training, serving, and agents`](https://www.googlecloudevents.com/next-vegas/session/3912907/what's-new-for-ai-on-gke-training-serving-and-agents) | GPU work is already isolated behind GKE workers, KEDA scaling, and a shared model cache. | Document the workers as an AI serving plane, with separate operational guidance for batch generation, interactive inference, and agent-triggered workloads. |
-| [`What's new in streaming: Real-time data for agentic AI`](https://www.googlecloudevents.com/next-vegas/session/3912220/what's-new-in-streaming-real-time-data-for-agentic-ai) | Pub/Sub currently handles request intake and dead-letter recovery. | Split the event model into request, status, moderation, and analytics streams so downstream systems can react in real time without polling or overloading the AI Director. |
+| [`What's new in streaming: Real-time data for agentic AI`](https://www.googlecloudevents.com/next-vegas/session/3912220/what's-new-in-streaming-real-time-data-for-agentic-ai) | Pub/Sub currently handles request intake and dead-letter recovery. | This refresh adds a dedicated status topic so the AI Director now emits job lifecycle events; moderation and analytics streams are the next logical extensions. |
 
-In short: NEXT '26 does not require a rewrite of MMP. It validates the existing direction and suggests that the next tutorial step should be **more agent-native control surfaces, a clearer GKE serving story, and richer streaming events around the generation pipeline**.
+In short: NEXT '26 does not require a rewrite of MMP. It validates the existing direction, and this refresh already makes one of those ideas concrete by **emitting generation lifecycle events onto Pub/Sub for downstream consumers**.
 
 ---
 
@@ -116,7 +116,7 @@ Users never touch private keys directly. The flow:
 7. ImageAgent: Upscales selected draft
 8. ImageAgent / ResplatAgent: Generates 3D asset (ComfyUI mesh or ReSplat .ply)
 9. AudioAgent: Generates soundscape for character type
-10. AI Director: Bundles assets, updates job status
+10. AI Director: Bundles assets, updates job status, and emits lifecycle events to `PUBSUB_STATUS_TOPIC` when configured
 11. Frontend: Polls /status/{job_id}, reveals character
 12. (Optional) Web3Agent: ERC-4337 gasless mint on Base
 ```

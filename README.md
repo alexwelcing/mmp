@@ -27,7 +27,7 @@ For the Google Cloud NEXT '26 coverage update, this tutorial now anchors itself 
 |---|---|---|
 | [`Google MCP Services: Connect AI agents to cloud infrastructure in minutes`](https://www.googlecloudevents.com/next-vegas/session/3912288/google-mcp-services-connect-ai-agents-to-cloud-infrastructure-in-minutes) | The AI Director is already an orchestration layer; MCP is the cleanest way to connect that layer to cloud tools without bespoke glue code. | Move cloud-side actions such as GKE inspection, BigQuery analytics, and future content ops behind IAM-backed MCP tools. |
 | [`What's new for AI on GKE: Training, serving, and agents`](https://www.googlecloudevents.com/next-vegas/session/3912907/what's-new-for-ai-on-gke-training-serving-and-agents) | MMP already uses GKE GPU workers for image and 3D generation, so the repo naturally fits the new “training, serving, and agents” framing. | Treat ComfyUI and ReSplat as a reusable AI serving plane with clearer scaling and reliability guidance. |
-| [`What's new in streaming: Real-time data for agentic AI`](https://www.googlecloudevents.com/next-vegas/session/3912220/what's-new-in-streaming-real-time-data-for-agentic-ai) | The project already depends on Pub/Sub, but only as a request queue. NEXT '26 pushes the bigger idea: agent systems need real-time event backbones. | Expand Pub/Sub from request intake into status, moderation, analytics, and gameplay event streams. |
+| [`What's new in streaming: Real-time data for agentic AI`](https://www.googlecloudevents.com/next-vegas/session/3912220/what's-new-in-streaming-real-time-data-for-agentic-ai) | The project already depends on Pub/Sub, but only as a request queue. NEXT '26 pushes the bigger idea: agent systems need real-time event backbones. | This refresh now adds a dedicated Pub/Sub lifecycle topic so MMP emits job status events in addition to request intake. |
 
 See [`docs/architecture.md`](./docs/architecture.md) for the concrete upgrade path and [`docs/google-cloud-next-2026-submission-draft.md`](./docs/google-cloud-next-2026-submission-draft.md) for the draft contest post.
 
@@ -230,6 +230,7 @@ npx hardhat run scripts/deploy.ts --network base-sepolia
 | `GCP_PROJECT_ID` | Your GCP project ID |
 | `PUBSUB_TOPIC` | Pub/Sub topic for generation requests |
 | `PUBSUB_SUBSCRIPTION` | Pull subscription consumed by the AI Director |
+| `PUBSUB_STATUS_TOPIC` | Optional Pub/Sub topic for emitted job lifecycle events |
 | `COMFYUI_ENDPOINT` | ComfyUI service URL |
 | `AUDIO_ENDPOINT` | Audio worker URL |
 | `USE_RESPLAT_FOR_3D` | Route 3D generation through ReSplat (`true` / `false`) |
