@@ -55,6 +55,10 @@ class Settings(BaseSettings):
         10,
         description="Max messages to pull per batch",
     )
+    ai_k8s_namespaces: str = Field(
+        "ai-director,comfyui,resplat,audio",
+        description="Comma-separated Kubernetes namespaces exposed through MCP tools",
+    )
 
     # ------------------------------------------------------------------ #
     # Filestore / Shared Storage                                           #
@@ -152,6 +156,10 @@ class Settings(BaseSettings):
     max_concurrent_jobs: int = Field(
         20,
         description="Max concurrent generation pipelines in this instance",
+    )
+    enable_mcp_server: bool = Field(
+        True,
+        description="Expose MCP-compatible AI Director tools over HTTP",
     )
     # CORS: set to a comma-separated list of allowed origins in production.
     # e.g. "https://yourgame.com,https://www.yourgame.com"
