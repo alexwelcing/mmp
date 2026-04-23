@@ -1,10 +1,11 @@
 """
 main.py — FastAPI application entry point for the AI Director service.
 
-Exposes three HTTP endpoints:
+Exposes four main HTTP endpoints:
   POST /generate          — Trigger a character generation pipeline.
   GET  /status/{job_id}  — Poll for job progress and results.
   POST /webhook/comfyui  — ComfyUI completion webhook (called by the worker).
+  POST /mcp              — MCP-compatible tool surface for agents.
 
 The OrchestratorAgent runs in the background, consuming messages from
 GCP Pub/Sub.  Direct /generate calls bypass Pub/Sub for low-latency
@@ -23,8 +24,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from agents.orchestrator import OrchestratorAgent, JobStage, _ROLES, _AESTHETICS, _RARITIES
+from agents.orchestrator import (
+    _AESTHETICS,
+    _RARITIES,
+    _ROLES,
+    JobStage,
+    OrchestratorAgent,
+)
 from config import get_settings
+from k8s_ai_service import KubernetesAIService
+from mcp_server import MCPServer
 
 # -------------------------------------------------------------------- #
 # Logging setup                                                          #
@@ -41,6 +50,8 @@ logger = logging.getLogger(__name__)
 # -------------------------------------------------------------------- #
 settings = get_settings()
 orchestrator = OrchestratorAgent(settings)
+k8s_ai_service = KubernetesAIService(settings)
+mcp_server = MCPServer(orchestrator, k8s_ai_service)
 
 
 @asynccontextmanager
@@ -130,6 +141,13 @@ class ComfyUIWebhookPayload(BaseModel):
     client_id: str
     job_id: str
     node_type: str = "image"  # "image" | "3dgs"
+
+
+class MCPRequest(BaseModel):
+    jsonrpc: str = Field("2.0", description="JSON-RPC protocol version")
+    id: str | int | None = Field(default=None, description="Request id echoed in the response")
+    method: str = Field(..., description="MCP method name")
+    params: dict[str, Any] = Field(default_factory=dict, description="Method parameters")
 
 
 # -------------------------------------------------------------------- #
@@ -236,7 +254,7 @@ async def mint_job(job_id: str, request: MintRequest) -> StatusResponse:
         logger.info("Minted job %s as token %d", job_id, token_id)
     except Exception as exc:
         job.stage = JobStage.COMPLETE  # revert so user can retry
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return StatusResponse(
         job_id=job.job_id,
@@ -274,10 +292,34 @@ async def comfyui_webhook(payload: ComfyUIWebhookPayload) -> dict[str, str]:
     return {"status": "acknowledged"}
 
 
+@app.post("/mcp")
+async def mcp_endpoint(request: MCPRequest) -> dict[str, Any]:
+    """Expose AI Director tools over a small MCP-compatible JSON-RPC surface."""
+    if not settings.enable_mcp_server:
+        raise HTTPException(status_code=404, detail="MCP server is disabled")
+
+    try:
+        return await mcp_server.handle(
+            request_id=request.id,
+            method=request.method,
+            params=request.params,
+        )
+    except HTTPException as exc:
+        return {
+            "jsonrpc": "2.0",
+            "id": request.id,
+            "error": {"code": -32000, "message": str(exc.detail)},
+        }
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     """Kubernetes liveness/readiness probe."""
-    return {"status": "ok", "environment": settings.environment}
+    return {
+        "status": "ok",
+        "environment": settings.environment,
+        "mcp": "enabled" if settings.enable_mcp_server else "disabled",
+    }
 
 
 # -------------------------------------------------------------------- #

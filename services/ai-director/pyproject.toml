@@ -16,6 +16,7 @@ dependencies = [
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
     "google-cloud-pubsub>=2.23",
+    "kubernetes>=30.1",
     "httpx>=0.27",
     "web3>=7.2",
     "eth-account>=0.13",
@@ -44,4 +45,5 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]

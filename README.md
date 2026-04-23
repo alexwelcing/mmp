@@ -19,6 +19,18 @@ This project demonstrates a **Dual-Horizon Strategy** for Web3 game monetization
 
 Players claim a free AI-generated character (no wallet required), then optionally mint it on-chain with full ownership. An autonomous AI Director orchestrates the entire pipeline — from Pub/Sub request to on-chain NFT — using GCP-native services.
 
+## ☁️ Google Cloud NEXT '26 Refresh
+
+For the Google Cloud NEXT '26 coverage update, this tutorial now anchors itself on three conference signals that fit MMP especially well:
+
+| NEXT '26 session / update | Why it matters here | MMP upgrade direction |
+|---|---|---|
+| [`Google MCP Services: Connect AI agents to cloud infrastructure in minutes`](https://www.googlecloudevents.com/next-vegas/session/3912288/google-mcp-services-connect-ai-agents-to-cloud-infrastructure-in-minutes) | The AI Director is already an orchestration layer; MCP is the cleanest way to connect that layer to cloud tools without bespoke glue code. | This refresh now adds a real `/mcp` tool surface for generation jobs plus Kubernetes AI-serving inspection. |
+| [`What's new for AI on GKE: Training, serving, and agents`](https://www.googlecloudevents.com/next-vegas/session/3912907/what's-new-for-ai-on-gke-training-serving-and-agents) | MMP already uses GKE GPU workers for image and 3D generation, so the repo naturally fits the new “training, serving, and agents” framing. | Treat ComfyUI and ReSplat as a reusable AI serving plane with clearer scaling and reliability guidance. |
+| [`What's new in streaming: Real-time data for agentic AI`](https://www.googlecloudevents.com/next-vegas/session/3912220/what's-new-in-streaming-real-time-data-for-agentic-ai) | The project already depends on Pub/Sub, but only as a request queue. NEXT '26 pushes the bigger idea: agent systems need real-time event backbones. | This refresh now adds a dedicated Pub/Sub lifecycle topic so MMP emits job status events in addition to request intake. |
+
+See [`docs/architecture.md`](./docs/architecture.md) for the concrete upgrade path and [`docs/google-cloud-next-2026-submission-draft.md`](./docs/google-cloud-next-2026-submission-draft.md) for the draft contest post.
+
 ---
 
 ## 🏗️ Architecture
@@ -218,6 +230,8 @@ npx hardhat run scripts/deploy.ts --network base-sepolia
 | `GCP_PROJECT_ID` | Your GCP project ID |
 | `PUBSUB_TOPIC` | Pub/Sub topic for generation requests |
 | `PUBSUB_SUBSCRIPTION` | Pull subscription consumed by the AI Director |
+| `PUBSUB_STATUS_TOPIC` | Optional Pub/Sub topic for emitted job lifecycle events |
+| `AI_K8S_NAMESPACES` | Comma-separated Kubernetes namespaces exposed through MCP tools |
 | `COMFYUI_ENDPOINT` | ComfyUI service URL |
 | `AUDIO_ENDPOINT` | Audio worker URL |
 | `USE_RESPLAT_FOR_3D` | Route 3D generation through ReSplat (`true` / `false`) |
@@ -227,7 +241,21 @@ npx hardhat run scripts/deploy.ts --network base-sepolia
 | `CHARACTER_NFT_ADDRESS` | Deployed CharacterNFT contract |
 | `PAYMASTER_ADDRESS` | Deployed AIDirectorPaymaster contract |
 | `SPLITS_ADDRESS` | Deployed CharacterSplits contract |
+| `ENABLE_MCP_SERVER` | Enable the AI Director's MCP-compatible `/mcp` endpoint |
 | `AI_DIRECTOR_PRIVATE_KEY` | Operational wallet private key (required in prod) |
+
+### MCP tools
+
+The AI Director now exposes a small MCP-compatible JSON-RPC endpoint at `POST /mcp`.
+Current tools:
+
+- `submit_generation_job`
+- `get_generation_job_status`
+- `list_ai_k8s_resources`
+- `get_ai_k8s_resource`
+
+This gives external agents a standard way to drive generation and inspect the
+GKE AI-serving plane without adding another bespoke control API.
 
 ---
 
