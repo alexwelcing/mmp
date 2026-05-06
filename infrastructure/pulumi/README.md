@@ -15,7 +15,7 @@ This directory contains a [Pulumi](https://www.pulumi.com/) program written in P
 __main__.py
     ├── MMPCluster          → VPC, GKE, node pools, IAM, Workload Identity
     ├── FilestoreCache      → NFS-backed shared model cache
-    ├── PubSubPipeline      → Topic, DLQ, subscription
+    ├── PubSubPipeline      → Request topic, status topic, DLQ, subscription
     ├── ComfyUIWorkerPool   → KEDA ScaledJob, ConfigMaps, PVC
     ├── AIDirectorService   → Deployment, HPA, Ingress
     └── ResplatWorker       → GPU Deployment for ReSplat
@@ -73,6 +73,7 @@ After `pulumi up`, the following outputs are available:
 pulumi stack output clusterEndpoint
 pulumi stack output filestoreIp
 pulumi stack output pubsubSubscription
+pulumi stack output pubsubStatusTopic
 pulumi stack output artifactRegistryUrl
 ```
 

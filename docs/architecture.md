@@ -70,12 +70,37 @@ ComfyUI and ReSplat models (SDXL, ControlNet, Zero123, etc.) are large (~10GB+).
 - **Pre-warmed cache** — a separate init Job pre-downloads models on deploy
 - **gVisor + CUDA snapshots** — fast pod restore from checkpoint
 
+## Google Cloud NEXT '26 Upgrade Path
+
+The current tutorial architecture still holds up well, but three NEXT '26 sessions sharpen where it should evolve next:
+
+| NEXT '26 signal | Current MMP state | Recommended tutorial upgrade |
+|---|---|---|
+| [`Google MCP Services: Connect AI agents to cloud infrastructure in minutes`](https://www.googlecloudevents.com/next-vegas/session/3912288/google-mcp-services-connect-ai-agents-to-cloud-infrastructure-in-minutes) | The AI Director already behaves like a control-plane agent, but cloud integrations were still described as direct service-specific calls. | This refresh adds an MCP-compatible `/mcp` endpoint with tools for generation jobs and Kubernetes AI-serving inspection, replacing another slice of bespoke glue with a standard tool surface. |
+| [`What's new for AI on GKE: Training, serving, and agents`](https://www.googlecloudevents.com/next-vegas/session/3912907/what's-new-for-ai-on-gke-training-serving-and-agents) | GPU work is already isolated behind GKE workers, KEDA scaling, and a shared model cache. | Document the workers as an AI serving plane, with separate operational guidance for batch generation, interactive inference, and agent-triggered workloads. |
+| [`What's new in streaming: Real-time data for agentic AI`](https://www.googlecloudevents.com/next-vegas/session/3912220/what's-new-in-streaming-real-time-data-for-agentic-ai) | Pub/Sub currently handles request intake and dead-letter recovery. | This refresh adds a dedicated status topic so the AI Director now emits job lifecycle events; moderation and analytics streams are the next logical extensions. |
+
+In short: NEXT '26 does not require a rewrite of MMP. It validates the existing direction, and this refresh already makes two of those ideas concrete by **emitting generation lifecycle events onto Pub/Sub** and **adding an MCP-compatible control surface for the AI serving plane**.
+
 ---
 
 ## Security Architecture
 
 ### Workload Identity
 GKE pods authenticate to GCP APIs (Pub/Sub, Filestore) via Workload Identity — no service account keys stored in the cluster.
+
+That same IAM-first posture lines up with the MCP direction highlighted at NEXT '26: agents should inherit scoped cloud permissions instead of shipping API keys inside application code.
+
+### MCP Control Surface
+The AI Director now exposes a `POST /mcp` endpoint that supports MCP-style
+tool discovery and tool calls over JSON-RPC. The first tools cover:
+
+- generation job submission and status lookup
+- Kubernetes inspection for the AI-serving namespaces (`ai-director`,
+  `comfyui`, `resplat`, `audio`)
+
+This keeps the tutorial approachable while showing how to shift agent
+operations away from one-off glue endpoints and toward a standard tool layer.
 
 ### ERC-4337 Account Abstraction
 Users never touch private keys directly. The flow:
@@ -102,7 +127,7 @@ Users never touch private keys directly. The flow:
 7. ImageAgent: Upscales selected draft
 8. ImageAgent / ResplatAgent: Generates 3D asset (ComfyUI mesh or ReSplat .ply)
 9. AudioAgent: Generates soundscape for character type
-10. AI Director: Bundles assets, updates job status
+10. AI Director: Bundles assets, updates job status, and emits lifecycle events to `PUBSUB_STATUS_TOPIC` when configured
 11. Frontend: Polls /status/{job_id}, reveals character
 12. (Optional) Web3Agent: ERC-4337 gasless mint on Base
 ```
