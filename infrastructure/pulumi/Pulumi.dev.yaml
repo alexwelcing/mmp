@@ -1,0 +1,25 @@
+# "Max Mini" Dev Tier - ~$50-70/month idle
+# Smallest viable setup for solo development
+
+config:
+  mmp:environment: dev
+  mmp:region: us-central1
+  mmp:zone: us-central1-a
+  
+  # Minimal storage (100GB instead of 1TB)
+  mmp:filestore_tier: BASIC_HDD
+  mmp:filestore_capacity_gb: "100"
+  
+  # Disable optional services for cost savings
+  # (Use mock implementations instead)
+  mmp:enable_resplat: "false"
+  mmp:enable_audio: "false"
+  
+  # Use Spot for maximum savings
+  mmp:use_spot_system_pool: "true"
+  
+  # GCP project (set this to your project)
+  # mmp:project_id: YOUR_PROJECT_ID
+  
+  # API domain (use nip.io for testing without DNS)
+  mmp:api_domain: api.34.8.224.143.nip.io

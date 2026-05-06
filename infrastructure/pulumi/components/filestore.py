@@ -5,7 +5,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from config import ENVIRONMENT, FILESTORE_CAPACITY_GB, FILESTORE_TIER, REGION
+from config import ENVIRONMENT, FILESTORE_CAPACITY_GB, FILESTORE_TIER, ZONE
 
 
 class FilestoreCache(pulumi.ComponentResource):
@@ -26,7 +26,7 @@ class FilestoreCache(pulumi.ComponentResource):
             f"{name}-instance",
             name=f"mmp-model-cache-{ENVIRONMENT}",
             tier=FILESTORE_TIER,
-            location=REGION,
+            location=ZONE,
             file_shares=gcp.filestore.InstanceFileSharesArgs(
                 name="comfyui_models",
                 capacity_gb=FILESTORE_CAPACITY_GB,
@@ -53,8 +53,12 @@ class FilestoreCache(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self),
         )
 
-        self.ip_address = self.instance.networks[0].ip_addresses[0]
-        self.share_name = self.instance.file_shares[0].name
+        # Export outputs using apply to handle preview phase
+        # The Filestore instance must be created before we can get its IP
+        self.ip_address = self.instance.id.apply(
+            lambda _: self.instance.networks[0].ip_addresses[0] if self.instance.networks else ""
+        )
+        self.share_name = "/comfyui_models"
 
         self.register_outputs({
             "ipAddress": self.ip_address,

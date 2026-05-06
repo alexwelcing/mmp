@@ -2,5 +2,8 @@ config:
   mmp:environment: production
   mmp:region: us-central1
   mmp:zone: us-central1-a
-  mmp:filestore_tier: ENTERPRISE
+  mmp:filestore_tier: BASIC_HDD
   mmp:api_domain: api.example.com
+  # Cost optimization flags
+  mmp:use_spot_system_pool: "true"
+  mmp:idle_cost_target: "100"

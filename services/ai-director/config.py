@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------ #
-    # Filestore / Shared Storage                                           #
+    # Asset Storage (GCS for persistent assets, Filestore for ComfyUI)     #
     # ------------------------------------------------------------------ #
     filestore_mount_path: str = Field(
         "/mnt/filestore",
@@ -59,6 +59,22 @@ class Settings(BaseSettings):
     output_base_path: str = Field(
         "/mnt/filestore/outputs",
         description="Directory where completed assets are written",
+    )
+    gcs_bucket: str = Field(
+        "",
+        description="GCS bucket for persistent asset storage (e.g., 'my-project-assets')",
+    )
+
+    # ------------------------------------------------------------------ #
+    # Image Generation Provider                                            #
+    # ------------------------------------------------------------------ #
+    image_provider: Literal["comfyui", "huggingface"] = Field(
+        "comfyui",
+        description="Image generation backend: 'comfyui' (GCP GPU) or 'huggingface' (API)",
+    )
+    huggingface_token: str = Field(
+        "",
+        description="Hugging Face API token (required if image_provider='huggingface')",
     )
 
     # ------------------------------------------------------------------ #
@@ -141,7 +157,7 @@ class Settings(BaseSettings):
     # Service                                                              #
     # ------------------------------------------------------------------ #
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    environment: Literal["local", "staging", "production"] = "local"
+    environment: Literal["local", "dev", "staging", "production"] = "local"
     max_concurrent_jobs: int = Field(
         20,
         description="Max concurrent generation pipelines in this instance",

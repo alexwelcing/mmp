@@ -5,7 +5,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from config import CLUSTER_NAME, ENVIRONMENT, PROJECT_ID, REGION, ZONE
+from config import CLUSTER_NAME, ENVIRONMENT, PROJECT_ID, REGION, USE_SPOT_SYSTEM_POOL, ZONE
 
 
 class MMPCluster(pulumi.ComponentResource):
@@ -84,17 +84,6 @@ class MMPCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self.ai_director_sa),
         )
 
-        # Workload Identity binding
-        gcp.serviceaccount.IAMMember(
-            f"{name}-ai-wi",
-            service_account_id=self.ai_director_sa.name,
-            role="roles/iam.workloadIdentityUser",
-            member=pulumi.Output.format(
-                "serviceAccount:{}.svc.id.goog[ai-director/ai-director]", PROJECT_ID
-            ),
-            opts=pulumi.ResourceOptions(parent=self.ai_director_sa),
-        )
-
         # ── VPC ────────────────────────────────────────────────────────────
         self.network = gcp.compute.Network(
             f"{name}-network",
@@ -153,6 +142,8 @@ class MMPCluster(pulumi.ComponentResource):
         )
 
         # ── System Node Pool ───────────────────────────────────────────────
+        # Use Spot instances for cost savings even in production if configured
+        # System workloads (AI Director, Audio) are stateless and can handle interruptions
         self.system_pool = gcp.container.NodePool(
             f"{name}-system-pool",
             name="system-pool",
@@ -164,7 +155,7 @@ class MMPCluster(pulumi.ComponentResource):
             ),
             node_config=gcp.container.NodePoolNodeConfigArgs(
                 machine_type="e2-standard-4",
-                spot=ENVIRONMENT != "production",
+                spot=(ENVIRONMENT != "production") or USE_SPOT_SYSTEM_POOL,
                 service_account=self.node_sa.email,
                 oauth_scopes=["https://www.googleapis.com/auth/cloud-platform"],
                 workload_metadata_config=gcp.container.NodePoolNodeConfigWorkloadMetadataConfigArgs(
@@ -222,6 +213,17 @@ class MMPCluster(pulumi.ComponentResource):
             self.cluster.name,
             self.cluster.master_auth["cluster_ca_certificate"],
         ).apply(lambda args: _build_kubeconfig(*args))
+
+        # Workload Identity binding - must be created after cluster for WI pool
+        self.workload_identity_binding = gcp.serviceaccount.IAMMember(
+            f"{name}-ai-wi",
+            service_account_id=self.ai_director_sa.name,
+            role="roles/iam.workloadIdentityUser",
+            member=pulumi.Output.format(
+                "serviceAccount:{}.svc.id.goog[ai-director/ai-director]", PROJECT_ID
+            ),
+            opts=pulumi.ResourceOptions(parent=self.ai_director_sa, depends_on=[self.cluster]),
+        )
 
         self.register_outputs({
             "endpoint": self.cluster.endpoint,

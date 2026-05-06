@@ -21,6 +21,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from agents.orchestrator import OrchestratorAgent, JobStage, _ROLES, _AESTHETICS, _RARITIES
@@ -65,6 +66,11 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Serve generated images statically
+import os
+os.makedirs("/tmp/outputs", exist_ok=True)
+app.mount("/images", StaticFiles(directory="/tmp/outputs"), name="images")
 
 # In production, set CORS_ALLOW_ORIGINS to a comma-separated list of
 # allowed origins (e.g. "https://yourgame.com,https://www.yourgame.com").
@@ -118,7 +124,7 @@ class StatusResponse(BaseModel):
     audio_url: str
     nft_token_id: int | None
     error: str | None
-    traits: dict[str, str] = Field(default_factory=dict)
+    traits: dict[str, Any] = Field(default_factory=dict)
 
 
 class MintRequest(BaseModel):

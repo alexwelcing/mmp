@@ -1,0 +1,30 @@
+# HYBRID: GCP + Hugging Face (85% cost reduction)
+# No GPU nodes - all inference via Hugging Face API
+
+config:
+  mmp:environment: dev
+  mmp:region: us-central1
+  mmp:zone: us-central1-a
+  # Hugging Face configuration
+  mmp:use_huggingface: "true"
+  mmp:ai_provider: "huggingface" # vs "comfyui"
+  # Minimal GCP infrastructure (no GPUs!)
+  mmp:use_cloud_run: "true" # Serverless, pay-per-use
+  mmp:filestore_capacity_gb: "50" # Just for caching
+  mmp:use_spot_system_pool: "true"
+  # Disable expensive components
+  mmp:enable_resplat: "false"
+  mmp:enable_comfyui: "false" # Use HF instead
+  # Cost estimate: ~$20-50/mo
+  # - Cloud Run: $0-10 (pay per request)
+  # - Filestore 50GB: ~$10
+  # - Pub/Sub: ~$5
+  # - Hugging Face Pro: $9 (separate subscription)
+  mmp:api_domain: api.34.8.224.143.nip.io
+  mmp:project_id: endlesse
+  mmp:enable_audio: "true"
+  mmp:hf_token:
+    secure: v1:UzR4MnBo3DWuZDnA:mU6l3vzwWm2djjbq58U1zHUBGPLzzitwS9mI4EpnHvEYKvdt8c8dCAtAgTzKF1sTo/V4FKQ=
+  gcp:project: endlesse
+  gcp:region: us-central1
+encryptionsalt: v1:L0TEoiKkDkc=:v1:ewJ5w4j76ep62iae:Oslvx5VEEFuEzRCqWFSbYbz++afwOA==

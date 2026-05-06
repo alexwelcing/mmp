@@ -1,0 +1,22 @@
+# "Max Mini" Dev Tier - ~$50-70/month idle
+# Smallest viable setup for solo development
+
+config:
+  mmp:environment: dev
+  mmp:region: us-central1
+  mmp:zone: us-central1-a
+  
+  # Minimal storage
+  mmp:filestore_tier: BASIC_HDD
+  mmp:filestore_capacity_gb: "256"
+  
+  # Disable optional services (use mocks instead)
+  mmp:enable_resplat: "false"
+  mmp:enable_audio: "false"
+  mmp:use_mock_web3: "true"
+  
+  # Use Spot for maximum savings
+  mmp:use_spot_system_pool: "true"
+  
+  # API domain (use nip.io for testing without DNS)
+  mmp:api_domain: api.34.120.XX.XX.nip.io

@@ -31,6 +31,7 @@ from config import Settings
 from .audio_agent import AudioAgent
 from .evaluator_agent import EvaluatorAgent
 from .image_agent import ImageAgent
+from .providers.image_provider import ImageProviderFactory
 from .resplat_agent import ResplatAgent
 from .web3_agent import Web3Agent
 
@@ -85,7 +86,9 @@ class OrchestratorAgent:
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_jobs)
 
         # Sub-agents are instantiated once and reused across jobs.
-        self._image_agent = ImageAgent(settings)
+        # Image generation uses a pluggable provider (Hugging Face or ComfyUI)
+        image_provider = ImageProviderFactory.create(settings)
+        self._image_agent = ImageAgent(settings, image_provider)
         self._evaluator = EvaluatorAgent()
         self._audio_agent = AudioAgent(settings)
         self._web3_agent = Web3Agent(settings)
@@ -236,8 +239,9 @@ class OrchestratorAgent:
         logger.info("Starting pipeline for job %s (user=%s)", job.job_id, job.user_id)
         try:
             # Stage 1: Generate multiple 2D drafts in parallel.
+            # Also generates unique character attributes
             job.stage = JobStage.DRAFTING
-            job.draft_urls = await self._image_agent.generate_2d_drafts(
+            job.draft_urls, character_attrs = await self._image_agent.generate_2d_drafts(
                 job.preferences,
                 count=self._settings.comfyui_draft_count,
                 job_id=job.job_id,
@@ -256,13 +260,17 @@ class OrchestratorAgent:
                 job_id=job.job_id,
             )
 
-            # Assign traits deterministically from the job id so they survive
-            # re-runs and match what the contract will mint.
-            job.traits = _generate_traits(job.job_id, job.preferences)
+            # Assign traits from the generated character attributes
+            # This ensures visual consistency between the image and metadata
+            job.traits = character_attrs.to_metadata()
 
             # Stage 4: Generate 3D representation (ComfyUI mesh or ReSplat).
+            # Skip if using HF provider (no 3DGS support yet)
             job.stage = JobStage.GENERATING_3DGS
-            if self._resplat_agent:
+            if self._settings.image_provider == "huggingface":
+                logger.info("Skipping 3DGS generation - HF provider mode")
+                job.threedgs_url = ""
+            elif self._resplat_agent:
                 job.threedgs_url = await self._resplat_agent.generate_3dgs(
                     job.upscaled_url,
                     job_id=job.job_id,
@@ -274,11 +282,16 @@ class OrchestratorAgent:
                 )
 
             # Stage 5: Generate audio soundscape.
+            # Skip if using HF provider (audio service not deployed)
             job.stage = JobStage.GENERATING_AUDIO
-            character_role = job.preferences.get("role", "warrior")
-            job.audio_url = await self._audio_agent.generate_soundscape(
-                character_role
-            )
+            if self._settings.image_provider == "huggingface":
+                logger.info("Skipping audio generation - HF provider mode")
+                job.audio_url = ""
+            else:
+                character_role = job.preferences.get("role", "warrior")
+                job.audio_url = await self._audio_agent.generate_soundscape(
+                    character_role
+                )
 
             # Stage 6: Gasless on-chain mint (only if user opted in).
             if job.preferences.get("mint_on_chain", False):

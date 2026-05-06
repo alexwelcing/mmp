@@ -168,15 +168,65 @@ React + TypeScript progressive onboarding UI:
 
 ## 🌩️ GCP Deployment
 
-### 1. Provision Infrastructure
+### ⚠️ Cost Warning
+
+| Tier | Idle Cost | Active Cost | Best For |
+|------|-----------|-------------|----------|
+| **Max Mini (dev)** | ~$50-70/mo | ~$100-200/mo | Solo dev, 2D only |
+| **Standard Dev** | ~$150/mo | ~$300-500/mo | Team dev, full pipeline |
+| **Production** | ~$285/mo | ~$1,500-9,000/mo | Live users, high availability |
+
+> **Note:** First deployment takes 15-20 minutes. Ensure you have [GPU quota](#prerequisites) before deploying.
+
+### Quick Deploy (Makefile)
 
 ```bash
-cd infrastructure/pulumi
-pulumi stack init staging
-pulumi config set project_id YOUR_PROJECT
-pulumi config set region us-central1
-pulumi up
+# 1. Check prerequisites
+make check
+
+# 2. Set your project
+export GCP_PROJECT_ID=your-project-id
+
+# 3. Deploy (choose one)
+make deploy-dev      # Max Mini tier (~$50/mo idle)
+make deploy-staging  # Standard Dev tier (~$150/mo idle)
+make deploy-prod     # Production tier (~$285/mo idle)
+
+# 4. Test the API
+make test-api
 ```
+
+### Manual Deploy
+
+```bash
+# 1. Setup gcloud
+export GCP_PROJECT_ID=your-project-id
+./infrastructure/scripts/gcloud-setup.sh
+
+# 2. Build images
+make build-images
+
+# 3. Deploy with Pulumi
+cd infrastructure/pulumi
+pulumi stack init dev
+pulumi config set project_id $GCP_PROJECT_ID
+pulumi config set environment dev
+pulumi up
+
+# 4. Get the load balancer IP
+make get-ip
+```
+
+### Required GCP Quotas
+
+Before deploying, ensure your project has these quotas:
+
+| Resource | Minimum | Request Increase |
+|----------|---------|------------------|
+| CPUS | 50 | [GCP Console](https://console.cloud.google.com/iam-admin/quotas) |
+| NVIDIA_T4_GPUS | 4 | [GCP Console](https://console.cloud.google.com/iam-admin/quotas) |
+| IN_USE_ADDRESSES | 20 | Usually automatic |
+| FILESTORE_INSTANCES | 2 | Usually automatic |
 
 ### 2. Build & Push Docker Images
 

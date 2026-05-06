@@ -59,8 +59,36 @@ class PubSubPipeline(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self),
         )
 
+        # ── ReSplat 3D Generation Queue ────────────────────────────────────
+        self.resplat_topic = gcp.pubsub.Topic(
+            f"{name}-resplat-topic",
+            name=f"resplat-3d-generation-{ENVIRONMENT}",
+            message_retention_duration="86400s",
+            labels={"environment": ENVIRONMENT, "managed_by": "pulumi", "service": "resplat"},
+            opts=pulumi.ResourceOptions(parent=self),
+        )
+
+        self.resplat_subscription = gcp.pubsub.Subscription(
+            f"{name}-resplat-sub",
+            name=f"resplat-3d-generation-sub-{ENVIRONMENT}",
+            topic=self.resplat_topic.id,
+            ack_deadline_seconds=600,
+            message_retention_duration="86400s",
+            dead_letter_policy=gcp.pubsub.SubscriptionDeadLetterPolicyArgs(
+                dead_letter_topic=self.dlq_topic.id,
+                max_delivery_attempts=5,
+            ),
+            retry_policy=gcp.pubsub.SubscriptionRetryPolicyArgs(
+                minimum_backoff="10s", maximum_backoff="300s"
+            ),
+            labels={"environment": ENVIRONMENT, "managed_by": "pulumi", "service": "resplat"},
+            opts=pulumi.ResourceOptions(parent=self),
+        )
+
         self.register_outputs({
             "topicName": self.topic.name,
             "subscriptionName": self.subscription.name,
             "dlqTopicName": self.dlq_topic.name,
+            "resplatTopicName": self.resplat_topic.name,
+            "resplatSubscriptionName": self.resplat_subscription.name,
         })

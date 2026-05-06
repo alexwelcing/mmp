@@ -1,16 +1,20 @@
-"""AudioWorker — CPU-only deployment for Facebook AudioGen inference."""
+"""AudioWorker — CPU-only deployment with KEDA scale-to-zero for AudioGen inference."""
 
 from __future__ import annotations
 
 import pulumi
 import pulumi_kubernetes as k8s
+from pulumi_kubernetes.apiextensions import CustomResource
 
 from config import ENVIRONMENT, REGISTRY_URL
 
 
 class AudioWorker(pulumi.ComponentResource):
     """
-    Deploys the Audio Worker namespace, Deployment, and Service.
+    Deploys the Audio Worker namespace, Deployment, Service, and KEDA ScaledObject.
+    
+    Uses KEDA ScaledObject to scale to zero when idle, eliminating idle costs
+    while providing fast cold-start via CPU-based scaling.
     """
 
     def __init__(
@@ -29,15 +33,16 @@ class AudioWorker(pulumi.ComponentResource):
             opts=k8s_opts,
         )
 
-        # Deployment
+        # Deployment - starts with 0 replicas, KEDA will scale up
         self.deployment = k8s.apps.v1.Deployment(
             f"{name}-deployment",
             metadata={
                 "name": "audio-worker",
                 "namespace": self.namespace.metadata["name"],
+                "labels": {"app": "audio-worker"},
             },
             spec={
-                "replicas": 1,
+                "replicas": 0,  # KEDA manages this
                 "selector": {"matchLabels": {"app": "audio-worker"}},
                 "template": {
                     "metadata": {"labels": {"app": "audio-worker"}},
@@ -56,7 +61,7 @@ class AudioWorker(pulumi.ComponentResource):
                                     }
                                 ],
                                 "resources": {
-                                    "requests": {"cpu": "1", "memory": "4Gi"},
+                                    "requests": {"cpu": "500m", "memory": "2Gi"},
                                     "limits": {"cpu": "2", "memory": "8Gi"},
                                 },
                                 "livenessProbe": {
@@ -102,4 +107,40 @@ class AudioWorker(pulumi.ComponentResource):
             opts=k8s_opts,
         )
 
-        self.register_outputs({"namespace": self.namespace.metadata["name"]})
+        # KEDA ScaledObject for scale-to-zero
+        # Scales based on CPU utilization and HTTP requests
+        self.scaled_object = CustomResource(
+            f"{name}-scaledobject",
+            api_version="keda.sh/v1alpha1",
+            kind="ScaledObject",
+            metadata={
+                "name": "audio-worker",
+                "namespace": self.namespace.metadata["name"],
+            },
+            spec={
+                "scaleTargetRef": {
+                    "name": "audio-worker",
+                    "kind": "Deployment",
+                    "apiVersion": "apps/v1",
+                },
+                "minReplicaCount": 0,
+                "maxReplicaCount": 3,
+                "cooldownPeriod": 300,  # Scale down after 5 min idle
+                "pollingInterval": 15,
+                "triggers": [
+                    {
+                        "type": "cpu",
+                        "metricType": "Utilization",
+                        "metadata": {
+                            "value": "50",  # Scale up at 50% CPU
+                        },
+                    },
+                ],
+            },
+            opts=k8s_opts,
+        )
+
+        self.register_outputs({
+            "namespace": self.namespace.metadata["name"],
+            "scalingMode": "keda-scaledobject",
+        })

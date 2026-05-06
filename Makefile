@@ -1,86 +1,172 @@
-# MMP — Local Development Makefile
-#
-# Quick reference:
-#   make dev-native      # Best dev experience: native AI Director + Frontend, Docker ComfyUI
-#   make dev-docker      # Run everything inside Docker
-#   make contracts-local # Deploy contracts to local Hardhat node
-#   make stop            # Stop all Docker containers
-#   make clean           # Stop containers and remove volumes
+# MMP (Autonomous AI Director) — Development Makefile
+# 
+# Quick Start:
+#   make check          # Verify prerequisites
+#   make deploy-dev     # Deploy to dev environment
+#   make test-api       # Test the API endpoint
 
-.PHONY: help dev-native dev-docker contracts-local stop clean install
+.PHONY: help check setup deploy-dev deploy-staging destroy-dev test-api logs clean
 
-help: ## Show this help message
-	@echo "MMP Local Development Commands"
-	@echo "=============================="
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-
-# ── Installation ────────────────────────────────────────────────────────────
-
-install: ## Install all dependencies (frontend, contracts, ai-director)
-	cd frontend && npm install --legacy-peer-deps
-	cd contracts && npm install --legacy-peer-deps
-	cd services/ai-director && python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
-
-# ── Local Development (Recommended) ─────────────────────────────────────────
-
-dev-native: ## Run ComfyUI + Audio in Docker, AI Director + Frontend natively
-	@echo "🚀 Starting local development stack..."
-	@echo "   ComfyUI  → http://localhost:8188"
-	@echo "   Audio    → http://localhost:9000"
-	@echo "   AI Director will start on http://localhost:8080"
-	@echo "   Frontend will start on http://localhost:5173"
+# Default target
+help:
+	@echo "MMP Development Commands"
+	@echo "========================"
 	@echo ""
-	@# Start ComfyUI and Audio workers in background
-	docker compose up --build -d comfyui audio
-	@echo "⏳ Waiting for ComfyUI to be healthy..."
-	@until curl -sf http://localhost:8188/system_stats > /dev/null 2>&1; do sleep 2; done
-	@echo "✅ ComfyUI is ready!"
-	@echo "⏳ Waiting for Audio worker to be healthy..."
-	@until curl -sf http://localhost:9000/health > /dev/null 2>&1; do sleep 2; done
-	@echo "✅ Audio worker is ready!"
+	@echo "Setup:"
+	@echo "  make check              Verify prerequisites"
+	@echo "  make setup              Run gcloud setup script"
 	@echo ""
-	@echo "Next steps (run in separate terminals):"
-	@echo "  1. make contracts-local    # Deploy local contracts"
-	@echo "  2. cd services/ai-director && source .venv/bin/activate && uvicorn main:app --reload --port 8080"
-	@echo "  3. cd frontend && npm run dev"
-
-dev-docker: ## Run AI Director, ComfyUI, and Hardhat entirely in Docker
-	docker compose --profile full --profile docker-ai-director up --build
-
-dev-resplat: ## Start ComfyUI + Audio + ReSplat in Docker (requires CUDA 12.8 GPU)
-	@echo "🚀 Starting local stack WITH ReSplat (requires NVIDIA GPU + CUDA 12.8)..."
-	docker compose --profile resplat up --build -d comfyui audio resplat
-	@echo "⏳ Waiting for services to be healthy..."
-	@until curl -sf http://localhost:8188/system_stats > /dev/null 2>&1; do sleep 2; done
-	@echo "✅ ComfyUI is ready!"
-	@until curl -sf http://localhost:9000/health > /dev/null 2>&1; do sleep 2; done
-	@echo "✅ Audio worker is ready!"
-	@until curl -sf http://localhost:9001/health > /dev/null 2>&1; do sleep 2; done
-	@echo "✅ ReSplat worker is ready!"
+	@echo "Deploy:"
+	@echo "  make deploy-dev         Deploy to dev (Max Mini tier, ~$50/mo)"
+	@echo "  make deploy-staging     Deploy to staging (Standard Dev tier, ~$150/mo)"
+	@echo "  make deploy-prod        Deploy to production"
 	@echo ""
-	@echo "Next steps:"
-	@echo "  1. make contracts-local"
-	@echo "  2. cd services/ai-director && source .venv/bin/activate && uvicorn main:app --reload --port 8080"
-	@echo "  3. cd frontend && npm run dev"
+	@echo "Test & Debug:"
+	@echo "  make test-api           Test API health endpoint"
+	@echo "  make logs               Follow AI Director logs"
+	@echo "  make kubeconfig         Configure kubectl access"
 	@echo ""
-	@echo "⚠️  Remember to set USE_RESPLAT_FOR_3D=true in your .env to route 3D generation through ReSplat"
-
-# ── Smart Contracts ─────────────────────────────────────────────────────────
-
-contracts-local: ## Start Hardhat node and deploy contracts locally
-	@echo "🚀 Starting local Hardhat node..."
-	@cd contracts && npx hardhat node &
-	@sleep 3
-	@echo "📝 Deploying contracts to local node..."
-	@cd contracts && npx hardhat run scripts/deploy-local.ts --network localhost
+	@echo "Cleanup:"
+	@echo "  make destroy-dev        Destroy dev environment"
+	@echo "  make clean              Remove build artifacts"
 	@echo ""
-	@echo "✅ Contracts deployed! Addresses written to .env.contracts"
-	@echo "Source them with:  export \$$(cat .env.contracts | xargs)"
 
-# ── Cleanup ─────────────────────────────────────────────────────────────────
+# Verify prerequisites
+check:
+	@echo "Checking prerequisites..."
+	@./infrastructure/scripts/check-prerequisites.sh
 
-stop: ## Stop all running Docker containers
-	docker compose --profile full --profile docker-ai-director --profile resplat down
+# Initial setup
+setup: check
+	@echo "Running gcloud setup..."
+	@./infrastructure/scripts/gcloud-setup.sh
 
-clean: ## Stop containers and remove all volumes (⚠️ destroys cached models)
-	docker compose --profile full --profile docker-ai-director --profile resplat down -v
+# Build and push images
+build-images:
+	@echo "Building Docker images..."
+	@./infrastructure/scripts/build-images.sh
+
+# Configure kubectl
+kubeconfig:
+	@echo "Configuring kubectl..."
+	@gcloud container clusters get-credentials mmp-cluster --region=us-central1 --project=$(GCP_PROJECT_ID)
+	@echo "kubectl configured. Test with: kubectl get nodes"
+
+# Deploy to dev (Max Mini tier - minimal cost)
+deploy-dev: check
+	@echo "Deploying to DEV (Max Mini tier, ~$50/mo)..."
+	@cd infrastructure/pulumi && \
+	pulumi stack select dev --create 2>/dev/null || true && \
+	pulumi config set environment dev && \
+	pulumi config set filestore_capacity_gb 100 && \
+	pulumi config set enable_resplat false && \
+	pulumi config set enable_audio false && \
+	pulumi config set use_spot_system_pool true && \
+	pulumi up --yes
+	@echo ""
+	@echo "Deployment complete! Get the load balancer IP:"
+	@echo "  make get-ip"
+
+# Deploy to staging (Standard Dev tier)
+deploy-staging: check
+	@echo "Deploying to STAGING (Standard Dev tier, ~$150/mo)..."
+	@cd infrastructure/pulumi && \
+	pulumi stack select staging --create 2>/dev/null || true && \
+	pulumi config set environment staging && \
+	pulumi config set filestore_capacity_gb 1024 && \
+	pulumi config set enable_resplat true && \
+	pulumi config set enable_audio true && \
+	pulumi config set use_spot_system_pool true && \
+	pulumi up --yes
+	@echo ""
+	@echo "Deployment complete! Get the load balancer IP:"
+	@echo "  make get-ip"
+
+# Deploy to production
+deploy-prod: check
+	@echo "Deploying to PRODUCTION (~$285/mo)..."
+	@cd infrastructure/pulumi && \
+	pulumi stack select production --create 2>/dev/null || true && \
+	pulumi config set environment production && \
+	pulumi config set filestore_capacity_gb 1024 && \
+	pulumi config set enable_resplat true && \
+	pulumi config set enable_audio true && \
+	pulumi config set use_spot_system_pool false && \
+	pulumi up --yes
+
+# Get the load balancer IP
+get-ip:
+	@cd infrastructure/pulumi && \
+	IP=$$(pulumi stack output lb_ip 2>/dev/null || kubectl get ingress ai-director -n ai-director -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "pending"); \
+	echo "Load Balancer IP: http://$$IP"
+
+# Test API endpoint
+test-api:
+	@cd infrastructure/pulumi && \
+	IP=$$(kubectl get ingress ai-director -n ai-director -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo ""); \
+	if [[ -n "$$IP" ]]; then \
+		echo "Testing API at http://$$IP..."; \
+		curl -s -H "Host: api.endlesse.dev" http://$$IP/health || echo "Failed to connect"; \
+	else \
+		echo "Load balancer IP not found. Wait for deployment to complete: make get-ip"; \
+	fi
+
+# Follow AI Director logs
+logs:
+	@kubectl logs -f -n ai-director deployment/ai-director --tail=50
+
+# Port forward for local testing
+port-forward:
+	@echo "Port forwarding AI Director to localhost:8080..."
+	@kubectl port-forward -n ai-director svc/ai-director 8080:8080
+
+# Generate character
+test-generate:
+	@cd infrastructure/pulumi && \
+	IP=$$(kubectl get ingress ai-director -n ai-director -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null); \
+	curl -X POST -H "Host: api.endlesse.dev" -H "Content-Type: application/json" \
+		-d '{"user_id":"test-123","preferences":{"role":"warrior"},"mint_on_chain":false}' \
+		http://$$IP/generate 2>/dev/null || echo "Failed to connect"
+
+# Destroy dev environment
+destroy-dev:
+	@echo "WARNING: This will destroy the dev environment and all data!"
+	@read -p "Are you sure? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		cd infrastructure/pulumi && pulumi stack select dev && pulumi destroy --yes; \
+	else \
+		echo "Cancelled."; \
+	fi
+
+# Quick deploy for development (skip builds)
+quick-deploy:
+	@cd infrastructure/pulumi && pulumi up --yes
+
+# Refresh Pulumi state from cloud
+refresh:
+	@cd infrastructure/pulumi && pulumi refresh --yes
+
+# Show Pulumi stack outputs
+outputs:
+	@cd infrastructure/pulumi && pulumi stack output
+
+# Clean build artifacts
+clean:
+	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	@find . -type f -name "*.pyc" -delete 2>/dev/null || true
+	@rm -rf infrastructure/pulumi/venv infrastructure/pulumi/__pycache__
+	@echo "Cleaned build artifacts"
+
+# Lint Python code
+lint:
+	@cd services/ai-director && ruff check .
+	@mypy services/ai-director
+
+# Run tests
+test:
+	@cd services/ai-director && pytest -v
+
+# Full CI pipeline
+ci: lint test
+	@echo "CI checks passed!"

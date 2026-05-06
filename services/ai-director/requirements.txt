@@ -11,9 +11,14 @@ pydantic-settings==2.4.0
 
 # GCP
 google-cloud-pubsub==2.23.0
+google-cloud-storage==2.18.0
 
 # HTTP client (async)
 httpx==0.27.2
+
+# Image generation providers
+huggingface-hub==0.25.0
+pillow==10.4.0
 
 # Web3 / Ethereum
 web3==7.2.0

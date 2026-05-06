@@ -21,6 +21,12 @@ from typing import Any
 import httpx
 
 from config import Settings
+from .providers.image_provider import ImageProvider, GeneratedImage
+from .character_attributes import (
+    CharacterAttributes,
+    generate_character_attributes,
+    format_traits_for_display,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +35,66 @@ logger = logging.getLogger(__name__)
 # mounted into the ComfyUI worker container at /workflows/.  When running
 # the AI Director locally (outside Docker), we fall back to the sibling
 # directory relative to the repository root.
-_WORKFLOW_DIR = (
-    Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", ""))
-    if os.environ.get("COMFYUI_WORKFLOWS_DIR")
-    else Path(__file__).resolve().parents[3] / "services" / "comfyui-worker" / "workflows"
-)
+def _get_workflow_dir() -> Path:
+    """Resolve workflow directory for both Docker and local dev."""
+    # First priority: explicit env var
+    if env_dir := os.environ.get("COMFYUI_WORKFLOWS_DIR"):
+        return Path(env_dir)
+    
+    # Second priority: check if running in Docker (/app/workflows exists)
+    docker_path = Path("/app/workflows")
+    if docker_path.exists():
+        return docker_path
+    
+    # Third priority: local dev relative to repo root
+    try:
+        repo_root = Path(__file__).resolve().parents[3]
+        local_path = repo_root / "services" / "comfyui-worker" / "workflows"
+        if local_path.exists():
+            return local_path
+    except IndexError:
+        pass
+    
+    # Fallback: return a default that will fail gracefully
+    return Path("/app/workflows")
+
+_WORKFLOW_DIR = _get_workflow_dir()
 _LIGHTNING_2D_WORKFLOW = _WORKFLOW_DIR / "lightning_2d_draft.json"
 _MESH_WORKFLOW = _WORKFLOW_DIR / "mesh_generation.json"
+
+
+def _check_workflow_files() -> bool:
+    """Validate workflow files exist and provide helpful error messages.
+    
+    Returns True if workflows are available, False otherwise.
+    When using a provider like HuggingFace, workflows are not required.
+    """
+    if not _WORKFLOW_DIR.exists():
+        logger.warning(
+            f"Workflow directory not found: {_WORKFLOW_DIR}. "
+            f"ComfyUI workflows will not be available. "
+            f"Set COMFYUI_WORKFLOWS_DIR if using ComfyUI provider."
+        )
+        return False
+    
+    missing = []
+    if not _LIGHTNING_2D_WORKFLOW.exists():
+        missing.append(_LIGHTNING_2D_WORKFLOW.name)
+    if not _MESH_WORKFLOW.exists():
+        missing.append(_MESH_WORKFLOW.name)
+    
+    if missing:
+        available = list(_WORKFLOW_DIR.glob("*.json")) if _WORKFLOW_DIR.exists() else []
+        logger.warning(
+            f"Missing workflow files in {_WORKFLOW_DIR}: {', '.join(missing)}. "
+            f"Available files: {[f.name for f in available]}"
+        )
+        return False
+    
+    return True
+
+# Check workflows on module load but don't fail - provider may not need them
+_WORKFLOWS_AVAILABLE = _check_workflow_files()
 
 
 @lru_cache(maxsize=8)
@@ -57,10 +116,11 @@ class ImageAgent:
     _webhook_events: dict[str, asyncio.Event] = {}
     _client_to_prompt: dict[str, str] = {}
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, provider: ImageProvider | None = None) -> None:
         self._endpoint = str(settings.comfyui_endpoint).rstrip("/")
         self._timeout = settings.comfyui_timeout_seconds
         self._output_base = settings.output_base_path
+        self._provider = provider
         # Reuse a single httpx client for connection pooling across all
         # ComfyUI requests (prompt submission + polling).
         self._client = httpx.AsyncClient(timeout=self._timeout)
@@ -74,13 +134,29 @@ class ImageAgent:
         preferences: dict[str, Any],
         count: int = 4,
         job_id: str = "",
-    ) -> list[str]:
+    ) -> tuple[list[str], CharacterAttributes]:
         """
-        Generate `count` 2D character drafts using the SDXL-Lightning workflow.
+        Generate `count` 2D character drafts using the configured provider.
 
-        Returns a list of file URLs / paths to the generated images.
+        Returns a tuple of (image_urls, character_attributes).
         Each draft is generated concurrently for speed.
         """
+        # Generate unique character attributes based on job_id
+        attrs = generate_character_attributes(user_id=job_id)
+        logger.info("Generated character attributes for %s:\n%s", job_id, format_traits_for_display(attrs))
+        
+        if self._provider:
+            # Use pluggable provider (Hugging Face, etc.) with rich prompt
+            prompt = attrs.generation_prompt
+            tasks = [
+                self._provider.generate_image(prompt, seed=i * 1000)
+                for i in range(count)
+            ]
+            results = await asyncio.gather(*tasks)
+            logger.info("Generated %d 2D drafts via provider", len(results))
+            return [r.url for r in results], attrs
+        
+        # Fallback to ComfyUI workflow
         tasks = [
             self._run_comfyui_workflow(
                 workflow_path=_LIGHTNING_2D_WORKFLOW,
@@ -92,20 +168,25 @@ class ImageAgent:
         ]
         results = await asyncio.gather(*tasks)
         logger.info("Generated %d 2D drafts", len(results))
-        return list(results)
+        return list(results), attrs
 
     async def upscale_draft(
         self, draft_url: str, job_id: str = ""
     ) -> str:
         """
-        Upscale a selected draft using the ComfyUI clarity upscaler node.
-
-        The clarity upscaler (4× tile-based) preserves fine details while
-        dramatically increasing resolution for print / 3D use.
+        Upscale a selected draft.
+        
+        Uses HF provider if available, otherwise falls back to ComfyUI.
         """
+        if self._provider:
+            # Use HF provider for upscaling
+            result = await self._provider.upscale_image(draft_url)
+            return result.url
+        
+        # Fallback to ComfyUI workflow
         params = {"input_image": draft_url, "upscale_factor": 4}
         upscaled = await self._run_comfyui_workflow(
-            workflow_path=_LIGHTNING_2D_WORKFLOW,  # reuses same template w/ upscale node
+            workflow_path=_LIGHTNING_2D_WORKFLOW,
             parameters={**params, "mode": "upscale"},
             job_id=job_id,
             node_type="image",
@@ -175,6 +256,20 @@ class ImageAgent:
             "width": 1024,
             "height": 1024,
         }
+
+    @staticmethod
+    def _build_prompt_from_preferences(preferences: dict[str, Any]) -> str:
+        """Build a text prompt from user preferences for provider-based generation."""
+        role = preferences.get("role", "warrior")
+        aesthetic = preferences.get("aesthetic", "fantasy")
+        custom_prompt = preferences.get("prompt_override", "")
+
+        base_prompt = (
+            f"game character portrait, {role}, {aesthetic} aesthetic, "
+            "detailed illustration, vibrant colors, dynamic pose, "
+            "professional concept art, 8k resolution"
+        )
+        return custom_prompt or base_prompt
 
     async def _run_comfyui_workflow(
         self,
