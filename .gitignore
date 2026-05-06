@@ -64,3 +64,4 @@ coverage/
 htmlcov/
 .coverage
 lcov.info
+mmp-deployer-key.json
