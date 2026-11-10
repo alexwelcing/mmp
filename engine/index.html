@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MMP engine: one tick, five parts</title>
+    <!-- An empty icon, so the browser does not ask the server for one. -->
+    <link rel="icon" href="data:," />
+    <style>
+      body { margin: 0; font: 14px/1.4 system-ui, sans-serif; background: #111; color: #ddd; display: flex; flex-wrap: wrap; }
+      canvas { background: #1b1b1b; max-width: 100%; }
+      #panel { padding: 12px 16px; max-width: 420px; }
+      h1 { font-size: 16px; margin: 0 0 8px; }
+      pre { white-space: pre-wrap; margin: 0 0 12px; }
+      .ok { color: #7c7; } .bad { color: #e77; }
+    </style>
+  </head>
+  <body>
+    <canvas id="view" width="640" height="640"></canvas>
+    <div id="panel">
+      <h1>MMP engine: one tick, five parts</h1>
+      <pre id="gpu">Checking the GPU...</pre>
+      <pre id="status"></pre>
+      <pre id="people"></pre>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

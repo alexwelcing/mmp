@@ -55,7 +55,9 @@ When modifying code, keep the tutorial / educational nature in mind: changes sho
 │   ├── src/                # Solidity contracts
 │   ├── test/               # Hardhat TS tests
 │   └── scripts/            # Deployment scripts
+├── engine/                 # Living World Engine (TypeGPU, self-contained; see engine/README.md)
 └── docs/                   # Additional documentation
+    └── engine/             # Engine architecture and specs
 ```
 
 ## 4. Build & Run Commands
@@ -83,6 +85,16 @@ npm install
 npx hardhat test
 npx hardhat compile
 ```
+
+### Engine (local)
+```bash
+cd engine
+npm install
+npm test             # vitest
+npm run type-check   # tsc --noEmit
+npm run dev          # demo page; open in Chrome (WebGPU)
+```
+The engine is separate from the asset pipeline. Its design is in `docs/engine/`, and `engine/README.md` lists what is built.
 
 ### Infra (deploy)
 

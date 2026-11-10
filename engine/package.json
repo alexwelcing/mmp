@@ -1,0 +1,24 @@
+{
+  "name": "mmp-engine",
+  "version": "1.0.0",
+  "description": "MMP engine: a game as small typed neural networks, one family per part of the game",
+  "scripts": {
+    "test": "vitest run",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "typegpu": "0.12.10"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.74",
+    "typescript": "^7.0.2",
+    "unplugin-typegpu": "0.12.8",
+    "vite": "^8.3.7",
+    "vitest": "^5.1.0",
+    "wgsl_reflect": "^1.6.0"
+  },
+  "type": "module",
+  "private": true
+}
